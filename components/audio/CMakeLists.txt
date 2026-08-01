@@ -1,0 +1,6 @@
+# Audio 组件 CMakeLists.txt
+idf_component_register(
+    SRCS "audio.c" "piano_samples.c"
+    INCLUDE_DIRS "."
+    REQUIRES driver log esp_adc
+)

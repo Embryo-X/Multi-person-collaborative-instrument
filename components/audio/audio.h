@@ -1,0 +1,45 @@
+/**
+ * ==============================================================
+ * 音频输出 — I2S MAX98357A 数字功放
+ * ==============================================================
+ * BCLK=48  LRCLK=45  DIN=47  音量ADC=21
+ * ==============================================================
+ */
+
+#ifndef AUDIO_H
+#define AUDIO_H
+
+#include "esp_err.h"
+#include <stdint.h>
+
+/* I2S 引脚 */
+#define AUDIO_BCLK_IO         GPIO_NUM_48
+#define AUDIO_LRCLK_IO        GPIO_NUM_45
+#define AUDIO_DIN_IO          GPIO_NUM_47
+
+/* ADC 音量（GPIO5 = ADC1_CH4，ADC1 不受蓝牙干扰） */
+#define VOLUME_ADC_PIN      5
+#define VOLUME_ADC_UNIT     ADC_UNIT_1
+#define VOLUME_ADC_CHAN     ADC_CHANNEL_4
+
+/* 音高频率 (Hz) */
+#define NOTE_DO             262
+#define NOTE_RE             294
+#define NOTE_MI             330
+#define NOTE_FA             349
+#define NOTE_SOL            392
+#define NOTE_LA             440
+#define NOTE_SI             494
+#define NOTE_DO2            523
+#define NOTE_RE2            587
+#define NOTE_MI2            659
+#define NOTE_SILENCE        0
+
+esp_err_t audio_init(void);
+void audio_play_freq(uint32_t freq_hz);
+void audio_stop(void);
+void audio_set_volume(uint8_t pct);
+void audio_update_volume(void);
+uint8_t audio_get_volume(void);
+
+#endif

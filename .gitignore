@@ -1,0 +1,37 @@
+# ESP-IDF 构建输出
+build/
+
+# ESP-IDF 组件管理器
+managed_components/
+dependencies.lock
+
+# 编译生成文件
+*.o
+*.d
+*.elf
+*.bin
+*.map
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# ESP-IDF 本地配置（由 sdkconfig.defaults 生成，不追踪）
+sdkconfig
+sdkconfig.old
+
+# 钢琴采样素材（大文件/版权，不追踪）
+88钢琴按键音.zip
+88钢琴按键音/
+
+# 采样中间产物（piano_samples.c 才是编译需要的）
+components/audio/wav/
+
+# Claude Code 本地设置
+.claude/
