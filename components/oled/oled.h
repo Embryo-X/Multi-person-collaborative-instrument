@@ -1,30 +1,24 @@
 /**
  * ==============================================================
- * TFT LCD 显示 — ST7735 128x160 SPI
+ * OLED 绘制层 — NV3007 142x428 屏幕
+ * 底层 SPI/初始化由独立 nv3007 组件负责
+ * 本组件负责帧缓冲 + 中文/ASCII 绘制
  * ==============================================================
  */
 
 #ifndef OLED_H
 #define OLED_H
 
-#include "driver/gpio.h"
+#include <stdint.h>
 #include "esp_err.h"
 
-/* ========== SPI 引脚 ========== */
-#define OLED_SPI_HOST           SPI2_HOST
-#define OLED_SCLK_IO            GPIO_NUM_2
-#define OLED_SDA_IO            GPIO_NUM_1
-#define OLED_DC_IO              GPIO_NUM_42
-#define OLED_RES_IO             GPIO_NUM_41
-#define OLED_CS_IO              GPIO_NUM_40
-
-/* --- 分辨率 --- */
-#define OLED_WIDTH               128
-#define OLED_HEIGHT              160
+/* --- 分辨率（与 nv3007 组件一致） --- */
+#define OLED_WIDTH       142
+#define OLED_HEIGHT      428
 
 /* --- 字宽 --- */
-#define FONT_ASC_WIDTH           6
-#define FONT_CN_WIDTH            16
+#define FONT_ASC_WIDTH   6
+#define FONT_CN_WIDTH    16
 
 /* ========== API ========== */
 esp_err_t oled_init(void);

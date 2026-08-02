@@ -56,30 +56,38 @@ esp_err_t touch_init(void)
     return ESP_OK;
 }
 
+/* 触摸防误触：阈值 + 连续确认 */
+#define TOUCH_THRESH     4        /* val > baseline*4 才判定为按下 */
+#define TOUCH_CONFIRM    3        /* 连续 3 次超阈值才真正触发 */
+
+static int g_confirm = 0;
+static int g_touch_state = 0;
+
 int touch_get_key(void)
 {
     if (!g_calibrated) return 0;
 
-    int best = 0;
-    uint32_t best_ratio = 100;
     uint32_t val;
+    if (touch_channel_read_data(g_chan[0], TOUCH_CHAN_DATA_TYPE_SMOOTH, &val) != ESP_OK)
+        return 0;
 
-    for (int i = 0; i < TOUCH_NUM; i++) {
-        if (touch_channel_read_data(g_chan[i], TOUCH_CHAN_DATA_TYPE_SMOOTH, &val) != ESP_OK)
-            continue;
-
-        /* 触摸值高于基线 → 触摸 */
-        if (val > g_baseline[i] * 3) {
-            uint32_t r = (g_baseline[i] > 0) ? (val * 100 / g_baseline[i]) : 100;
-            if (r > best_ratio) { best_ratio = r; best = KEY_MAP[i]; }
+    if (val > g_baseline[0] * TOUCH_THRESH) {
+        /* 连续确认：防偶发误触（如手靠近/环境干扰） */
+        if (g_confirm < TOUCH_CONFIRM) {
+            g_confirm++;
+        } else {
+            g_touch_state = 1;
         }
-
-        /* 未触摸时缓慢更新基线 */
-        if (val < g_baseline[i] * 2)
-            g_baseline[i] = (g_baseline[i] * 99 + val) / 100;
-        else if (val < g_baseline[i] / 2)
-            g_baseline[i] = val;  /* 基线被污染，立即复位 */
+    } else {
+        g_confirm = 0;
+        g_touch_state = 0;
     }
 
-    return best;
+    /* 未触摸时缓慢更新基线 */
+    if (val < g_baseline[0] * 2)
+        g_baseline[0] = (g_baseline[0] * 99 + val) / 100;
+    else if (val < g_baseline[0] / 2)
+        g_baseline[0] = val;  /* 基线被污染，立即复位 */
+
+    return g_touch_state ? KEY_MAP[0] : 0;
 }

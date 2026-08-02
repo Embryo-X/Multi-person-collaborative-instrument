@@ -36,8 +36,9 @@
 #define NOTE_SILENCE        0
 
 esp_err_t audio_init(void);
-void audio_play_freq(uint32_t freq_hz);
-void audio_stop(void);
+void audio_play_freq(uint32_t freq_hz);  /* 触发一个音符（支持多音叠加） */
+void audio_stop_freq(uint32_t freq_hz);  /* 停止指定音符 */
+void audio_stop(void);                    /* 停止所有音符 */
 void audio_set_volume(uint8_t pct);
 void audio_update_volume(void);
 uint8_t audio_get_volume(void);

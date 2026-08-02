@@ -1,9 +1,10 @@
 /**
  * ==============================================================
- * 音频输出 — I2S MAX98357A + 真实钢琴采样回放
+ * 音频输出 — I2S MAX98357A + 真实钢琴采样多声道回放
  * ==============================================================
- * 10个音符预采样 (物理建模生成): Do~HiMi
- * 每个采样完整播放，ADSR包络仅用于起音/释音平滑
+ * 10个音符预采样: Do~HiMi
+ * 8 声道 voice 池：每声道独立采样/位置/包络，
+ * 支持同时按下多个键 → 和弦/重叠音叠加输出
  * ==============================================================
  */
 
@@ -20,6 +21,7 @@
 static const char *TAG = "audio";
 
 #define SAMPLE_RATE   44100
+#define MAX_VOICES    8          /* 最多同时响 8 个音 */
 
 /* I2S 句柄 */
 static i2s_chan_handle_t g_tx = NULL;
@@ -27,98 +29,121 @@ static i2s_chan_handle_t g_tx = NULL;
 /* ADC 句柄 */
 static adc_oneshot_unit_handle_t g_adc = NULL;
 
-/* 共享状态 */
-static const piano_sample_t *volatile g_sample = NULL;  /* 当前采样 */
-static volatile uint32_t g_sample_pos = 0;               /* 播放位置 */
-static volatile uint8_t  g_vol = 80;
-static volatile int      g_note_on = 0;
+static volatile uint8_t g_vol = 80;
 
 /* 平滑音量（防电位器突变产生电音） */
 static int g_vol_smooth = 80;
 
+/* ---- 多声道 voice ----
+ * state: 0=idle 1=attack 2=sustain 3=release */
+typedef struct {
+    const piano_sample_t *sample;   /* 当前采样（NULL=空闲） */
+    uint32_t freq;                  /* 音符频率，stop_freq 匹配用 */
+    uint32_t pos;                   /* 采样播放位置 */
+    int      env;                   /* 包络 0~256 */
+    int      state;
+} voice_t;
+
+static voice_t g_voices[MAX_VOICES];
+static uint32_t g_voice_next = 0;   /* 全忙时的轮转替换指针 */
+
 /* ==============================================================
- * 采样回放 + 轻量 ADSR（采样自带衰减，包络仅防爆音）
+ * 多声道混音回放
  * ============================================================== */
 static void audio_task(void *arg)
 {
-    uint32_t pos = 0;
-    int env = 0;
-    enum { IDLE, PLAYING, RELEASE } state = IDLE;
-
     int16_t buf[256];
 
     while (1) {
-        const piano_sample_t *sp = (const piano_sample_t *)g_sample;
-        int note_on = g_note_on;
-        g_note_on = 0;
-
         /* 音量滑动平均：每次向目标靠拢 1/8，消除电位器突变 */
         g_vol_smooth += ((int)g_vol - g_vol_smooth) / 8;
         int vol = g_vol_smooth;
         if (vol < 0) vol = 0;
 
-        switch (state) {
-        case IDLE:
-            if (sp && sp->data && sp->length) {
-                state = PLAYING;
-                pos = 0;
-                env = 0;
-            }
-            break;
-        case PLAYING:
-            /* ~4ms 起音斜坡，防止喀嚓声 */
-            if (env < 256) env += 24;
-            if (env > 256) env = 256;
-            /* 采样放完 或 按键释放 或 采样被清除 */
-            if (!sp || pos >= sp->length) {
-                state = RELEASE;
-            }
-            if (note_on && sp) {
-                /* 连奏：从头重新触发 */
-                pos = 0;
-                env = 0;
-            }
-            break;
-        case RELEASE:
-            env -= 8;   /* ~100ms 释音 */
-            if (env <= 0) {
-                env = 0;
-                state = IDLE;
-            }
-            if (note_on && sp) {
-                state = PLAYING;
-                pos = 0;
-                env = 0;
-            }
-            break;
-        }
-
-        if (state == IDLE || !sp) {
-            memset(buf, 0, sizeof(buf));
-        } else {
-            uint32_t remain = sp->length - pos;
-            for (int i = 0; i < 128; i++) {
-                int32_t s = 0;
-                if (i < (int)remain) {
-                    s = (int32_t)sp->data[pos + i];
+        /* ---- 每块更新各 voice 状态机 ---- */
+        for (int v = 0; v < MAX_VOICES; v++) {
+            voice_t *vo = &g_voices[v];
+            switch (vo->state) {
+            case 1: /* attack: ~4ms 起音斜坡防爆音 */
+                vo->env += 24;
+                if (vo->env >= 256) { vo->env = 256; vo->state = 2; }
+                break;
+            case 2: /* sustain: 采样放完或已释放 → release */
+                if (!vo->sample || vo->pos >= vo->sample->length)
+                    vo->state = 3;
+                break;
+            case 3: /* release: ~100ms 释音 */
+                vo->env -= 8;
+                if (vo->env <= 0) {
+                    vo->env = 0;
+                    vo->state = 0;
+                    vo->sample = NULL;
                 }
-                s = s * env * vol / 25600;
-                /* 限幅余量 12000：MAX98357A 增益大，留 headroom 防破音 */
-                if (s > 12000) s = 12000;
-                if (s < -12000) s = -12000;
-                buf[i * 2]     = (int16_t)s;
-                buf[i * 2 + 1] = (int16_t)s;
+                break;
+            default:
+                break;
             }
-            pos += 128;
-            if (pos > sp->length) pos = sp->length;
         }
 
-        g_sample_pos = pos;
+        /* ---- 混合 128 采样（每声道独立位置） ---- */
+        memset(buf, 0, sizeof(buf));
+        for (int v = 0; v < MAX_VOICES; v++) {
+            voice_t *vo = &g_voices[v];
+            if (vo->state == 0 || !vo->sample) continue;
+            const int16_t *data = vo->sample->data;
+            uint32_t len = vo->sample->length;
+            if (vo->pos >= len) continue;
+
+            for (int i = 0; i < 128 && vo->pos < len; i++) {
+                int32_t s = (int32_t)data[vo->pos] * vo->env * vol / 25600;
+                vo->pos++;
+                /* 叠加到总线，限幅余量 12000 防破音 */
+                int32_t mix = (int32_t)buf[i * 2] + s;
+                if (mix > 12000) mix = 12000;
+                if (mix < -12000) mix = -12000;
+                buf[i * 2]     = (int16_t)mix;
+                buf[i * 2 + 1] = (int16_t)mix;
+            }
+        }
 
         size_t written = 0;
         i2s_channel_write(g_tx, buf, sizeof(buf), &written, portMAX_DELAY);
         taskYIELD();
     }
+}
+
+/* 分配一个 voice 播放指定采样 */
+static voice_t *voice_allocate(const piano_sample_t *sp, uint32_t freq)
+{
+    /* 1. 重触发同频 voice（连奏） */
+    for (int v = 0; v < MAX_VOICES; v++) {
+        if (g_voices[v].freq == freq && g_voices[v].state > 0) {
+            g_voices[v].sample = sp;
+            g_voices[v].pos = 0;
+            g_voices[v].env = 0;
+            g_voices[v].state = 1;
+            return &g_voices[v];
+        }
+    }
+    /* 2. 找空闲 voice */
+    for (int v = 0; v < MAX_VOICES; v++) {
+        if (g_voices[v].state == 0) {
+            g_voices[v].sample = sp;
+            g_voices[v].freq = freq;
+            g_voices[v].pos = 0;
+            g_voices[v].env = 0;
+            g_voices[v].state = 1;
+            return &g_voices[v];
+        }
+    }
+    /* 3. 全忙：轮转替换（新的优先于最旧） */
+    uint32_t v = g_voice_next++ % MAX_VOICES;
+    g_voices[v].sample = sp;
+    g_voices[v].freq = freq;
+    g_voices[v].pos = 0;
+    g_voices[v].env = 0;
+    g_voices[v].state = 1;
+    return &g_voices[v];
 }
 
 /* ==============================================================
@@ -178,18 +203,35 @@ esp_err_t audio_init(void)
 void audio_play_freq(uint32_t freq_hz)
 {
     /* 按频率查找采样 */
+    const piano_sample_t *sp = NULL;
     for (int i = 0; i < 10; i++) {
         if (g_piano_samples[i].freq == freq_hz) {
-            g_sample = &g_piano_samples[i];
-            g_note_on = 1;
-            return;
+            sp = &g_piano_samples[i];
+            break;
         }
     }
-    /* 未找到匹配频率，不发声 */
-    g_sample = NULL;
+    if (!sp) return;
+
+    voice_allocate(sp, freq_hz);
 }
 
-void audio_stop(void) { g_sample = NULL; }
+void audio_stop_freq(uint32_t freq_hz)
+{
+    /* 停止所有同频 voice（进入释音，平滑结束） */
+    for (int v = 0; v < MAX_VOICES; v++) {
+        if (g_voices[v].freq == freq_hz && g_voices[v].state > 0)
+            g_voices[v].state = 3;
+    }
+}
+
+void audio_stop(void)
+{
+    /* 停止所有 voice */
+    for (int v = 0; v < MAX_VOICES; v++) {
+        if (g_voices[v].state > 0)
+            g_voices[v].state = 3;
+    }
+}
 
 void audio_set_volume(uint8_t pct) { if (pct <= 100) g_vol = pct; }
 

@@ -1,27 +1,31 @@
 /**
  * ==============================================================
- * TFT LCD — ST7735 128x160 SPI + esp_lcd
+ * OLED 绘制层 — NV3007 142x428
+ * 帧缓冲 + 中文字模渲染 + 局部刷新
+ * 底层驱动由 nv3007 组件提供
  * ==============================================================
  */
 
 #include <string.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
+#include <stdio.h>
 #include "esp_log.h"
-#include "esp_lcd_panel_io.h"
-#include "esp_lcd_panel_vendor.h"
-#include "esp_lcd_panel_ops.h"
-#include "driver/spi_master.h"
+#include "esp_check.h"
 
 #include "oled.h"
 #include "cn_font.h"
+#include "nv3007.h"
 
 static const char *TAG = "oled";
 
-static esp_lcd_panel_io_handle_t g_io = NULL;
-static esp_lcd_panel_handle_t    g_panel = NULL;
+#define WHITE  0xFFFF
+#define BLACK  0x0000
 
-/* 全屏帧缓冲 128x160 RGB565 = 40KB */
+/* 中央统一刷新区域（48 行）：center_text 和 two_lines 共用，
+ * 避免各自不同区域导致切换模式时内容残留 */
+#define OLED_CENTER_Y0   ((OLED_HEIGHT - 48) / 2)
+#define OLED_CENTER_Y1   (OLED_CENTER_Y0 + 47)
+
+/* 全屏帧缓冲 142x428 RGB565 = 122KB */
 static uint16_t g_fb[OLED_WIDTH * OLED_HEIGHT];
 
 /* ==============================================================
@@ -78,9 +82,6 @@ static const uint8_t font_6x8[][6] = {
     {0x08,0x04,0x08,0x10,0x08,0x00},
 };
 
-#define WHITE  0xFFFF
-#define BLACK  0x0000
-
 /* ==============================================================
  * 帧缓冲像素操作
  * ============================================================== */
@@ -94,6 +95,18 @@ static void fb_fill(uint16_t c) {
         g_fb[i] = c;
 }
 
+/* 清一个矩形区域为黑 */
+static void fb_clear_region(int x0, int y0, int x1, int y1)
+{
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 >= OLED_WIDTH) x1 = OLED_WIDTH - 1;
+    if (y1 >= OLED_HEIGHT) y1 = OLED_HEIGHT - 1;
+    for (int y = y0; y <= y1; y++)
+        for (int x = x0; x <= x1; x++)
+            g_fb[y * OLED_WIDTH + x] = BLACK;
+}
+
 /* ---- 画 ASCII 字符到帧缓冲 ---- */
 static void draw_asc(int x0, int y0, char ch)
 {
@@ -102,9 +115,8 @@ static void draw_asc(int x0, int y0, char ch)
     for (int col = 0; col < FONT_ASC_WIDTH; col++) {
         uint8_t b = font_6x8[idx][col];
         for (int row = 0; row < 8; row++) {
-            if (b & (1 << row)) {
+            if (b & (1 << row))
                 fb_set(x0 + col, y0 + row, WHITE);
-            }
         }
     }
 }
@@ -149,59 +161,19 @@ static uint8_t text_width(const char *s) {
 
 esp_err_t oled_init(void)
 {
-    ESP_LOGI(TAG, "初始化 ST7735 TFT 128x160 SPI...");
-
-    /* SPI 总线 */
-    spi_bus_config_t bus_cfg = {
-        .mosi_io_num = OLED_SDA_IO,
-        .miso_io_num = -1,
-        .sclk_io_num = OLED_SCLK_IO,
-        .quadwp_io_num = -1,
-        .quadhd_io_num = -1,
-        .max_transfer_sz = OLED_WIDTH * OLED_HEIGHT * 2 + 10,
-    };
-    ESP_ERROR_CHECK(spi_bus_initialize(OLED_SPI_HOST, &bus_cfg, SPI_DMA_CH_AUTO));
-
-    /* SPI Panel IO */
-    esp_lcd_panel_io_spi_config_t io_cfg = {
-        .cs_gpio_num = OLED_CS_IO,
-        .dc_gpio_num = OLED_DC_IO,
-        .spi_mode = 0,
-        .pclk_hz = 10 * 1000 * 1000,
-        .trans_queue_depth = 2,
-        .lcd_cmd_bits = 8,
-        .lcd_param_bits = 8,
-    };
-    ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)OLED_SPI_HOST, &io_cfg, &g_io));
-
-    /* ST7735 Panel (use ST7789 driver with ST7735-compatible config) */
-    esp_lcd_panel_dev_config_t panel_cfg = {
-        .reset_gpio_num = OLED_RES_IO,
-        .color_space = ESP_LCD_COLOR_SPACE_RGB,
-        .bits_per_pixel = 16,
-    };
-    ESP_ERROR_CHECK(esp_lcd_new_panel_st7789(g_io, &panel_cfg, &g_panel));
-
-    ESP_ERROR_CHECK(esp_lcd_panel_reset(g_panel));
-    ESP_ERROR_CHECK(esp_lcd_panel_init(g_panel));
-    ESP_ERROR_CHECK(esp_lcd_panel_invert_color(g_panel, true));
-    /* 竖屏: MX=1, MV=1, MY=0 (MADCTL = 0x60) */
-    ESP_ERROR_CHECK(esp_lcd_panel_swap_xy(g_panel, true));
-    ESP_ERROR_CHECK(esp_lcd_panel_mirror(g_panel, true, false));
-
-    esp_lcd_panel_disp_on_off(g_panel, true);
+    ESP_RETURN_ON_ERROR(nv3007_init(), TAG, "nv3007_init");
 
     fb_fill(BLACK);
-    esp_lcd_panel_draw_bitmap(g_panel, 0, 0, OLED_WIDTH, OLED_HEIGHT, g_fb);
+    nv3007_draw_region(0, 0, OLED_WIDTH - 1, OLED_HEIGHT - 1, g_fb);
 
-    ESP_LOGI(TAG, "ST7735 TFT 初始化完成");
+    ESP_LOGI(TAG, "OLED 绘制层初始化完成");
     return ESP_OK;
 }
 
 void oled_clear(void)
 {
     fb_fill(BLACK);
-    esp_lcd_panel_draw_bitmap(g_panel, 0, 0, OLED_WIDTH, OLED_HEIGHT, g_fb);
+    nv3007_draw_region(0, 0, OLED_WIDTH - 1, OLED_HEIGHT - 1, g_fb);
 }
 
 void oled_draw_two_lines(const char *l1, const char *l2)
@@ -210,36 +182,34 @@ void oled_draw_two_lines(const char *l1, const char *l2)
     uint8_t w2 = text_width(l2);
     uint8_t sx1 = (w1 < OLED_WIDTH) ? (OLED_WIDTH - w1) / 2 : 0;
     uint8_t sx2 = (w2 < OLED_WIDTH) ? (OLED_WIDTH - w2) / 2 : 0;
-    uint8_t y1 = (OLED_HEIGHT - 32) / 2;    /* 上行 */
-    uint8_t y2 = y1 + 22;                   /* 下行 */
+    uint8_t y1 = OLED_CENTER_Y0 + 4;   /* 第一行 */
+    uint8_t y2 = y1 + 22;              /* 第二行 */
 
-    fb_fill(BLACK);
+    fb_clear_region(0, OLED_CENTER_Y0, OLED_WIDTH - 1, OLED_CENTER_Y1);
     oled_draw_text(sx1, y1, l1);
     oled_draw_text(sx2, y2, l2);
-    oled_refresh();
+    nv3007_draw_region(0, OLED_CENTER_Y0, OLED_WIDTH - 1, OLED_CENTER_Y1,
+                       &g_fb[OLED_CENTER_Y0 * OLED_WIDTH]);
 }
 
 void oled_draw_vol(uint8_t pct)
 {
-    /* 右上角画 "95%" */
     char buf[8];
     snprintf(buf, sizeof(buf), "%d%%", (int)pct);
     int w = strlen(buf) * FONT_ASC_WIDTH;
     int sx = OLED_WIDTH - w - 2;
     int sy = 4;
-    /* 先清该区域 */
     for (int y = sy; y < sy + 8; y++)
         for (int x = sx; x < OLED_WIDTH; x++)
             fb_set(x, y, BLACK);
-    /* 画文字 */
-    for (int i = 0; buf[i]; i++) {
+    for (int i = 0; buf[i]; i++)
         draw_asc(sx + i * FONT_ASC_WIDTH, sy, buf[i]);
-    }
+    nv3007_draw_region(sx, sy, OLED_WIDTH - 1, sy + 7, &g_fb[sy * OLED_WIDTH + sx]);
 }
 
 void oled_refresh(void)
 {
-    esp_lcd_panel_draw_bitmap(g_panel, 0, 0, OLED_WIDTH, OLED_HEIGHT, g_fb);
+    nv3007_draw_region(0, 0, OLED_WIDTH - 1, OLED_HEIGHT - 1, g_fb);
 }
 
 void oled_draw_text(uint8_t x, uint8_t y, const char *text)
@@ -264,9 +234,11 @@ void oled_draw_center_text(const char *text)
 {
     uint8_t tw = text_width(text);
     uint8_t sx = (tw < OLED_WIDTH) ? (OLED_WIDTH - tw) / 2 : 0;
-    uint8_t sy = (OLED_HEIGHT - 16) / 2;   /* 16px 高居中 */
+    /* 在统一中央区域内垂直居中 */
+    uint8_t sy = OLED_CENTER_Y0 + (48 - 16) / 2;
 
-    fb_fill(BLACK);
+    fb_clear_region(0, OLED_CENTER_Y0, OLED_WIDTH - 1, OLED_CENTER_Y1);
     oled_draw_text(sx, sy, text);
-    oled_refresh();
+    nv3007_draw_region(0, OLED_CENTER_Y0, OLED_WIDTH - 1, OLED_CENTER_Y1,
+                       &g_fb[OLED_CENTER_Y0 * OLED_WIDTH]);
 }

@@ -35,3 +35,20 @@ components/audio/wav/
 
 # Claude Code 本地设置
 .claude/
+
+# ===== 屏幕调试临时文件 =====
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.webp
+*.raw
+*.pgm
+*.7z
+
+# 屏幕开发资料（规格书/例程，大文件，可能版权）
+开发资料/
+
+# 临时调试脚本
+tools/analyze_pgm.py
+tools/analyze_screen.py

@@ -24,6 +24,7 @@
 #include "audio.h"
 #include "nvs_flash.h"
 #include "ble_app.h"
+#include "led_bar.h"
 
 static const char *TAG = "main";
 
@@ -44,7 +45,7 @@ static const int SCORE[] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
 #define SCORE_LEN        10
 
 static uint8_t current_mode = 0;
-static int last_key = 0;
+static uint16_t g_last_mask = 0;   /* 上一次按下的键位掩码（多键） */
 static int score_step = 0;
 static int score_done = 0;
 
@@ -60,6 +61,7 @@ void app_main(void)
     keypad_init();
     touch_init();
     audio_init();
+    led_bar_init();   /* WS2812 灯带 */
     ble_app_init();   /* 启动时初始化 BLE，所有模式下保持连接 */
 
     gpio_reset_pin(DO_LED_PIN);
@@ -74,19 +76,23 @@ void app_main(void)
     ESP_LOGI(TAG, "初始化完成");
 
     while (1) {
-        int key = keypad_get_key();
-        if (key == 0) key = touch_get_key();  /* 矩阵按键优先，其次触摸 */
-        int key_pressed = (key != 0 && key != last_key);
-        last_key = key;
+        /* 采集所有同时按下的键（矩阵 + 触摸），位掩码表示 */
+        uint16_t mask = keypad_get_pressed_mask();
+        if (touch_get_key()) mask |= (1u << 10);
+        uint16_t new_keys = mask & ~g_last_mask;    /* 本次新按下的键 */
+        uint16_t released = g_last_mask & ~mask;    /* 本次松开的键 */
+        g_last_mask = mask;
 
         /* GPIO4 = 模式切换 */
         if (button_read_click()) {
             audio_stop();
+            led_bar_clear();
             gpio_set_level(DO_LED_PIN, 0);
             gpio_set_level(RE_LED_PIN, 0);
             current_mode = (current_mode + 1) % MODE_COUNT;
             score_step = 0;
             score_done = 0;
+            g_last_mask = 0;
             oled_draw_center_text(MODE_TEXTS[current_mode]);
             ESP_LOGI(TAG, "→ 模式: %d", current_mode);
         }
@@ -96,24 +102,28 @@ void app_main(void)
         case 0: /* 架子鼓 */
         case 1: /* 吉他 */
             audio_stop();
+            led_bar_clear();
             gpio_set_level(DO_LED_PIN, 0);
             gpio_set_level(RE_LED_PIN, 0);
             break;
 
-        case 2: /* 电子琴 */
+        case 2: /* 电子琴：支持多键同时按下 → 和弦，灯带跟随按键 */
             gpio_set_level(DO_LED_PIN, 0);
             gpio_set_level(RE_LED_PIN, 0);
-            if (key_pressed) {
-                audio_play_freq(NOTE_FREQS[key]);
-                oled_draw_center_text(NOTE_NAMES[key]);
-                ESP_LOGI(TAG, "弹奏: %s", NOTE_NAMES[key]);
-            } else if (key == 0) {
-                audio_stop();
-                oled_draw_center_text(MODE_TEXTS[current_mode]);
+            led_bar_show_keys(mask);   /* 按下的音键点亮对应灯珠 */
+            for (int k = 1; k <= 10; k++) {
+                if (new_keys & (1u << k)) {
+                    audio_play_freq(NOTE_FREQS[k]);
+                    oled_draw_center_text(NOTE_NAMES[k]);   /* 显示最后按下的音名 */
+                    ESP_LOGI(TAG, "弹奏: %s (key=%d)", NOTE_NAMES[k], k);
+                }
+                if (released & (1u << k))
+                    audio_stop_freq(NOTE_FREQS[k]);
             }
             break;
 
         case 3: /* 乐谱 */
+            led_bar_clear();
             if (score_done) {
                 oled_draw_center_text("完成");
                 audio_stop();
@@ -125,10 +135,10 @@ void app_main(void)
             gpio_set_level(RE_LED_PIN, (target == 2) ? 1 : 0);
             oled_draw_center_text(NOTE_NAMES[target]);
 
-            if (key_pressed && key == target) {
-                audio_play_freq(NOTE_FREQS[key]);
+            if ((new_keys & (1u << target))) {
+                audio_play_freq(NOTE_FREQS[target]);
                 score_step++;
-                ESP_LOGI(TAG, "乐谱 %d/%d: %s", score_step, SCORE_TOTAL, NOTE_NAMES[key]);
+                ESP_LOGI(TAG, "乐谱 %d/%d: %s", score_step, SCORE_TOTAL, NOTE_NAMES[target]);
                 if (score_step >= SCORE_TOTAL) {
                     score_done = 1;
                     gpio_set_level(DO_LED_PIN, 0);
@@ -136,7 +146,10 @@ void app_main(void)
                     oled_draw_center_text("完成");
                 }
             }
-            if (key == 0) audio_stop();
+            /* 松开的键停音 */
+            for (int k = 1; k <= 10; k++)
+                if (released & (1u << k))
+                    audio_stop_freq(NOTE_FREQS[k]);
             }
             break;
 
@@ -144,6 +157,7 @@ void app_main(void)
             gpio_set_level(DO_LED_PIN, 0);
             gpio_set_level(RE_LED_PIN, 0);
             audio_stop();
+            led_bar_clear();
             if (ble_app_is_connected())
                 oled_draw_two_lines("蓝牙模式", "已连接");
             else
@@ -152,15 +166,13 @@ void app_main(void)
         }
 
         }
-        /* 音量 ADC + 右上角显示（每 500ms 刷新一次屏幕，
-         * 避免每 10ms 全屏刷新 40KB 抢占 SPI 带宽影响音频） */
+        /* 音量 ADC + 右上角显示（每 500ms，局部刷新不占带宽） */
         {
             static int vol_tick = 0;
             if (++vol_tick >= 50) {
                 vol_tick = 0;
                 audio_update_volume();
                 oled_draw_vol(audio_get_volume());
-                oled_refresh();
             }
         }
 

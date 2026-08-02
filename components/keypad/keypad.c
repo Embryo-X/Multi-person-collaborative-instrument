@@ -43,23 +43,29 @@ static int g_pressed_col = -1;
 /* 扫描一次原始状态 */
 static void scan_raw(void)
 {
-    /* 所有行先切高阻 */
+    /* 所有行先切高阻 + 上拉，避免上一轮残留低电平 */
     for (int r = 0; r < ROWS; r++) {
         gpio_set_direction(ROW_PINS[r], GPIO_MODE_INPUT);
+        gpio_set_pull_mode(ROW_PINS[r], GPIO_PULLUP_ONLY);
     }
+    esp_rom_delay_us(50);   /* 等所有行恢复到高电平 */
 
     /* 逐行拉低、读列 */
     for (int r = 0; r < ROWS; r++) {
-        gpio_set_level(ROW_PINS[r], 0);
         gpio_set_direction(ROW_PINS[r], GPIO_MODE_OUTPUT);
-        esp_rom_delay_us(20);
+        gpio_set_level(ROW_PINS[r], 0);
+        esp_rom_delay_us(100);  /* 拉低稳定 */
 
         for (int c = 0; c < COLS; c++) {
             g_raw[r][c] = (gpio_get_level(COL_PINS[c]) == 0);
         }
 
-        /* 恢复高阻 */
+        /* 关键：恢复高阻时强制上拉。
+         * 否则该行引脚残留 LOW 电平，会通过按下的按键把列线拉低，
+         * 导致下一行扫描误判成当前行与同一列的交点。 */
         gpio_set_direction(ROW_PINS[r], GPIO_MODE_INPUT);
+        gpio_set_pull_mode(ROW_PINS[r], GPIO_PULLUP_ONLY);
+        esp_rom_delay_us(50);
     }
 }
 
@@ -103,6 +109,7 @@ esp_err_t keypad_init(void)
     for (int r = 0; r < ROWS; r++) {
         gpio_reset_pin(ROW_PINS[r]);
         gpio_set_direction(ROW_PINS[r], GPIO_MODE_INPUT);  /* 初始高阻 */
+        gpio_set_pull_mode(ROW_PINS[r], GPIO_PULLUP_ONLY);  /* 上拉防残留 */
     }
     for (int c = 0; c < COLS; c++) {
         gpio_reset_pin(COL_PINS[c]);
@@ -124,6 +131,17 @@ int keypad_get_key(void)
     if (g_pressed_row >= 0 && g_pressed_col >= 0)
         return KEY_MAP[g_pressed_row][g_pressed_col];
     return 0;
+}
+
+uint16_t keypad_get_pressed_mask(void)
+{
+    update();
+    uint16_t mask = 0;
+    for (int r = 0; r < ROWS; r++)
+        for (int c = 0; c < COLS; c++)
+            if (g_stable[r][c])
+                mask |= (1u << KEY_MAP[r][c]);
+    return mask;
 }
 
 int keypad_get_row(void) { return g_pressed_row; }
