@@ -21,7 +21,7 @@
 #define NV3007_DC_IO      GPIO_NUM_42    /* 命令/数据 */
 #define NV3007_RES_IO     GPIO_NUM_41    /* 复位 */
 #define NV3007_CS_IO      GPIO_NUM_40    /* 片选 */
-#define NV3007_BL_IO      GPIO_NUM_9     /* 背光 */
+/* 背光 BLK 直接接 3.3V 常亮，不用 GPIO 控制 */
 
 /* ========== 分辨率 ==========
  * rotation 0 (竖屏): 142x428 */
@@ -44,8 +44,5 @@ void nv3007_fill_screen(uint16_t color);
 
 /* 只刷新指定矩形区域 (坐标自动加 X 偏移) */
 void nv3007_draw_region(int x0, int y0, int x1, int y1, const uint16_t *data);
-
-/* 背光控制 */
-void nv3007_backlight(bool on);
 
 #endif

@@ -86,10 +86,7 @@ esp_err_t nv3007_init(void)
 {
     ESP_LOGI(TAG, "初始化 NV3007 %dx%d 4-SPI...", NV3007_WIDTH, NV3007_HEIGHT);
 
-    /* 背光 */
-    gpio_reset_pin(NV3007_BL_IO);
-    gpio_set_direction(NV3007_BL_IO, GPIO_MODE_OUTPUT);
-    gpio_set_level(NV3007_BL_IO, 1);
+    /* 背光 BLK 接 3.3V 常亮，无 GPIO 控制 */
 
     /* SPI 总线 */
     spi_bus_config_t bus_cfg = {
@@ -179,10 +176,5 @@ void nv3007_fill_screen(uint16_t color)
     for (int x = 0; x < NV3007_WIDTH; x++) line[x] = color;
     for (int y = 0; y < NV3007_HEIGHT; y++)
         nv3007_draw_region(0, y, NV3007_WIDTH - 1, y, line);
-}
-
-void nv3007_backlight(bool on)
-{
-    gpio_set_level(NV3007_BL_IO, on ? 1 : 0);
 }
 

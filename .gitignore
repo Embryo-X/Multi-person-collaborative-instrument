@@ -52,3 +52,9 @@ components/audio/wav/
 # 临时调试脚本
 tools/analyze_pgm.py
 tools/analyze_screen.py
+
+# 参考项目 / 临时文件（不追踪）
+BadAppleESP32S3/
+1.txt
+build_err.txt
+build_out.txt
