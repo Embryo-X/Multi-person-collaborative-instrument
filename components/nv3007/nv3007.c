@@ -62,7 +62,7 @@ static const init_cmd_t NV3007_INIT[] = {
     {0xE4,1,{0x0E}}, {0xE5,1,{0x01}}, {0xE6,1,{0x19}}, {0xE7,1,{0x10}},
     {0xE8,1,{0x10}}, {0xEA,1,{0x12}}, {0xEB,1,{0xD0}}, {0xEC,1,{0x04}},
     {0xED,1,{0x07}}, {0xEE,1,{0x07}}, {0xEF,1,{0x09}},
-    {0xF0,1,{0xD0}}, {0xF1,2,{0x0E,0x17}}, {0xF2,4,{0x2C,0x1B,0x0B,0x20}},
+    {0xF0,1,{0xD0}}, {0xF1,1,{0x0E}}, {0xF9,1,{0x17}}, {0xF2,4,{0x2C,0x1B,0x0B,0x20}},
     {0xE9,1,{0x29}}, {0xEC,1,{0x04}},
     /* TE */
     {0x35,1,{0x00}}, {0x44,2,{0x00,0x10}}, {0x46,1,{0x10}},
@@ -141,32 +141,35 @@ esp_err_t nv3007_init(void)
     uint8_t madctl = NV3007_MADCTL;
     esp_lcd_panel_io_tx_param(g_io, 0x36, &madctl, 1);
 
-    /* 厂商核心窗口 */
-    uint8_t colwin[4] = { 0x00, 0x0C, 0x00, 0x99 };   /* X 12-153 (142px) */
-    uint8_t rowwin[4] = { 0x00, 0x00, 0x01, 0xAB };   /* Y 0-427 (428px) */
-    nv3007_cmd(0x2A, colwin, 4);
-    nv3007_cmd(0x2B, rowwin, 4);
-
     /* Display On */
     esp_lcd_panel_io_tx_param(g_io, 0x29, NULL, 0);
     vTaskDelay(pdMS_TO_TICKS(150));
+
+    /* 反色关 0x21：黑底白字（BadApple invertDisplay(false) 对 IPS 屏发 0x21）。
+     * 若仍白屏，尝试改成 0x20（反色开） */
+    esp_lcd_panel_io_tx_param(g_io, 0x21, NULL, 0);
 
     ESP_LOGI(TAG, "NV3007 初始化完成 (MADCTL=0x%02X)", madctl);
     return ESP_OK;
 }
 
 /* ==============================================================
- * 区域刷新（坐标自动加 X 偏移）
+ * 区域刷新（坐标自动加 X/Y 偏移）
+ * 一次性发送全部数据（分批会导致 CS 时序中断 RAMWR，数据只写部分 → 乱码）
+ * 黑白界面（0xFFFF/0x0000）不受 RGB565 字节序影响
  * ============================================================== */
 void nv3007_draw_region(int x0, int y0, int x1, int y1, const uint16_t *data)
 {
-    uint8_t col[4] = { (uint8_t)((x0 + NV3007_X_OFFSET) >> 8), (uint8_t)((x0 + NV3007_X_OFFSET) & 0xFF),
-                       (uint8_t)((x1 + NV3007_X_OFFSET) >> 8), (uint8_t)((x1 + NV3007_X_OFFSET) & 0xFF) };
-    uint8_t row[4] = { (uint8_t)(y0 >> 8), (uint8_t)(y0 & 0xFF),
-                       (uint8_t)(y1 >> 8), (uint8_t)(y1 & 0xFF) };
+    int cx0 = x0 + NV3007_X_OFFSET, cx1 = x1 + NV3007_X_OFFSET;
+    int cy0 = y0 + NV3007_Y_OFFSET, cy1 = y1 + NV3007_Y_OFFSET;
+    uint8_t col[4] = { (uint8_t)(cx0 >> 8), (uint8_t)(cx0 & 0xFF),
+                       (uint8_t)(cx1 >> 8), (uint8_t)(cx1 & 0xFF) };
+    uint8_t row[4] = { (uint8_t)(cy0 >> 8), (uint8_t)(cy0 & 0xFF),
+                       (uint8_t)(cy1 >> 8), (uint8_t)(cy1 & 0xFF) };
     nv3007_cmd(0x2A, col, 4);
     nv3007_cmd(0x2B, row, 4);
-    esp_lcd_panel_io_tx_color(g_io, 0x2C, data, (x1 - x0 + 1) * (y1 - y0 + 1) * 2);
+    esp_lcd_panel_io_tx_color(g_io, 0x2C, data,
+                              (uint32_t)(x1 - x0 + 1) * (y1 - y0 + 1) * 2);
 }
 
 void nv3007_fill_screen(uint16_t color)

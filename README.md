@@ -1,6 +1,6 @@
 # 多人协作硬件乐器 — ESP32-S3 固件
 
-基于 ESP32-S3 的多模式电子乐器控制器，带 **TFT 彩屏、真实钢琴采样发声、矩阵键盘、电容触摸、BLE 蓝牙**，面向"多人协作演奏"项目。
+基于 ESP32-S3 的多模式电子乐器控制器，带 **TFT 彩屏、真实钢琴采样发声、矩阵键盘、电容触摸、WS2812 灯带**，面向"多人协作演奏"项目。
 
 > BLE 通讯协议见 [`ble-protocol.md`](ble-protocol.md)，落地清单见 [`ble-hardware-implement-checklist.md`](ble-hardware-implement-checklist.md)
 
@@ -10,26 +10,40 @@
 
 | 功能 | 说明 |
 |------|------|
-| **5 种模式** | 架子鼓 / 吉他 / 电子琴 / 乐谱 / 蓝牙（GPIO4 按键切换） |
-| **10 个音符** | Do~高Mi（矩阵键盘 9 键 + 触摸 1 键） |
-| **真实钢琴音** | 88 键钢琴录音采样（16bit/44.1kHz），I2S 输出到 MAX98357A 功放 |
-| **TFT 彩屏** | ST7735 128×160，中文显示当前模式/音符/音量 |
-| **音量调节** | 电位器（ADC），屏幕右上角实时显示百分比 |
-| **BLE 蓝牙** | Embryo 协作协议（设备名 `Embryo-Perc`），连接状态屏幕显示 |
+| **4 种模式** | 架子鼓 / 电子琴 / 乐谱 / 蓝牙（GPIO4 切换） |
+| **13 个音符** | Do~高La（矩阵键盘 9 键 + 触摸 4 键） |
+| **真实钢琴音** | 88 键钢琴录音采样 + 变调，I2S 输出到 MAX98357A 功放 |
+| **多音复音** | 8 声道混音，支持同时按下多个键（和弦） |
+| **TFT 彩屏** | NV3007 142×428，竖排文字显示 |
+| **WS2812 灯带** | 13 灯珠对应 13 音，弹奏点亮 + 乐谱模式提示 |
+| **音量调节** | 电位器（ADC），屏幕右上角显示 |
+| **蓝牙** | 默认关闭（`BLE_ENABLED` 宏开启） |
 
 ---
 
 ## 硬件接线
 
-### 核心引脚（都在各组件 `.h` 文件顶部 `#define`）
+### 屏幕（NV3007 142×428，8 脚）
 
-| 外设 | 引脚 | 说明 |
-|------|------|------|
-| **TFT 屏幕** | SCLK=2, SDA=1, DC=42, RST=41, CS=40 | ST7735 128×160 SPI |
-| **音频功放** | BCLK=48, LRCLK=45, DIN=47 | MAX98357A I2S |
-| **音量电位器** | GPIO5 | ADC1_CH4 |
-| **模式切换键** | GPIO4 | 按下切换模式 |
-| **Do/Re LED** | GPIO15/16 | 乐谱模式提示灯 |
+| 屏引脚 | → ESP32 | 说明 |
+|--------|---------|------|
+| GND | GND | 地 |
+| VCC | 3.3V | 电源 |
+| SCL | GPIO2 | SPI 时钟 |
+| MOS | GPIO1 | SPI 数据（=SDA） |
+| RES | GPIO41 | 复位 |
+| DC | GPIO42 | 命令/数据 |
+| CS | GPIO40 | 片选 |
+| BLK | GPIO9 | 背光（高电平亮） |
+
+### 音频（MAX98357A）
+
+| 引脚 | ESP32 |
+|------|-------|
+| BCLK | GPIO48 |
+| LRCLK | GPIO45 |
+| DIN | GPIO47 |
+| 音量电位器 | GPIO5（ADC1） |
 
 ### 矩阵键盘（3×3 = 9 键）
 
@@ -39,77 +53,63 @@ R38     Do     Re     Mi
 R39     Fa     Sol    La
 R21     Si    高Do   高Re
 ```
+- 行：GPIO38 / GPIO39 / GPIO21
+- 列：GPIO35 / GPIO36 / GPIO37
 
-- **行**（输出，逐行拉低扫描）：GPIO38 / GPIO39 / GPIO21
-- **列**（输入，上拉）：GPIO35 / GPIO36 / GPIO37
-- 按键一端接行线，另一端接列线
-
-### 电容触摸
+### 触摸（4 键，高音区）
 
 | 触摸通道 | 引脚 | 音符 |
 |----------|------|------|
-| TOUCH14 | GPIO14 | 高Mi |
+| TOUCH11 | GPIO11 | 高Mi |
+| TOUCH12 | GPIO12 | 高Fa |
+| TOUCH13 | GPIO13 | 高Sol |
+| TOUCH14 | GPIO14 | 高La |
+
+### 其他
+
+| 功能 | 引脚 |
+|------|------|
+| WS2812 灯带 | GPIO20 |
+| 模式切换键 | GPIO4 |
+| Do/Re LED | GPIO15 / GPIO16 |
 
 ---
 
-## 音符按键布局
+## 音符按键布局（13 音）
 
-| key 编号 | 音符 | 输入方式 |
-|----------|------|---------|
-| 1 | Do (262Hz) | 矩阵 R38×C35 |
-| 2 | Re (294Hz) | 矩阵 R38×C36 |
-| 3 | Mi (330Hz) | 矩阵 R38×C37 |
-| 4 | Fa (349Hz) | 矩阵 R39×C35 |
-| 5 | Sol (392Hz) | 矩阵 R39×C36 |
-| 6 | La (440Hz) | 矩阵 R39×C37 |
-| 7 | Si (494Hz) | 矩阵 R21×C35 |
-| 8 | 高Do (523Hz) | 矩阵 R21×C36 |
-| 9 | 高Re (587Hz) | 矩阵 R21×C37 |
-| 10 | 高Mi (659Hz) | 触摸 GPIO14 |
+| key | 音符 | 输入 |
+|-----|------|------|
+| 1~9 | Do 高Re | 矩阵键盘 |
+| 10~13 | 高Mi 高La | 触摸 |
+
+> 高Fa/高Sol/高La 用高Mi 采样变速播放（变调），音高正确、音色略变。
 
 ---
 
-## 五种模式
+## 四种模式
 
 | # | 模式 | 行为 |
 |---|------|------|
-| 0 | 架子鼓 | 无声（预留） |
-| 1 | 吉他 | 无声（预留） |
-| 2 | 电子琴 | 按键→弹奏对应音符，屏幕显示音符名 |
-| 3 | 乐谱 | 按谱面顺序按键跟弹，Do/Re LED 提示，完成显示"完成" |
-| 4 | 蓝牙 | 显示连接状态（已连接/等待中），不发音 |
+| 0 | 架子鼓 | 静音（预留） |
+| 1 | 电子琴 | 弹奏发声 + 灯带跟随，支持和弦 |
+| 2 | 乐谱 | 按谱面跟弹，灯带提示该按的键，完成显示"完成" |
+| 3 | 蓝牙 | 显示连接状态（蓝牙默认关闭） |
 
-按 **GPIO4** 循环切换模式。
+按 **GPIO4** 循环切换。
 
 ---
 
-## 开发环境搭建
+## 开发环境
 
-### 1. 安装 ESP-IDF
-
-本项目使用 **ESP-IDF v5.5.4**。推荐两种方式：
-
-- **VSCode + ESP-IDF 插件**：[官方安装指南](https://docs.espressif.com/projects/esp-idf/zh_CN/latest/esp32s3/get-started/index.html)
-- **命令行**：下载 [ESP-IDF Windows 离线安装包](https://dl.espressif.com/dl/esp-idf/)
-
-### 2. 编译 & 烧录
-
-Windows 打开 **ESP-IDF 5.5 CMD** 终端：
+- ESP-IDF **v5.5.4**，目标芯片 **esp32s3**
+- 分区表：自定义 `partitions.csv`（4MB app，容纳 1.3MB 采样）
 
 ```bash
-cd 项目目录
-idf.py set-target esp32s3     # 首次只需一次
-idf.py build                  # 编译
-idf.py -p COM3 flash monitor  # 烧录 + 打开串口日志（COM3 换实际端口）
+idf.py set-target esp32s3
+idf.py -p COM3 flash monitor
 ```
 
-> 或者双击 [`tools/build.bat`](tools/build.bat) 一键编译烧录。
-
-退出串口监视器：`Ctrl + ]`
-
-### 3. 配置芯片目标
-
-`idf.py set-target esp32s3` 后，项目会使用 `sdkconfig.defaults` 自动启用 BLE 蓝牙。
+> 或双击 [`tools/build.bat`](tools/build.bat) 一键编译烧录。
 
 ---
 
@@ -118,61 +118,53 @@ idf.py -p COM3 flash monitor  # 烧录 + 打开串口日志（COM3 换实际端�
 ```
 ├── CMakeLists.txt              # 顶层 CMake
 ├── partitions.csv               # 自定义分区表（4MB app）
-├── sdkconfig.defaults           # 默认配置（BLE 启用等）
+├── sdkconfig.defaults           # 默认配置
 ├── main/
-│   └── main.c                  # 主程序（初始化 + 5 模式主循环）
+│   └── main.c                  # 主程序（4 模式主循环）
 ├── components/
-│   ├── audio/                   # 音频：I2S + 钢琴采样回放
-│   │   └── piano_samples.c     # ★ 10 个真实钢琴采样 C 数组（勿删，编译需要）
-│   ├── ble_app/                 # BLE 蓝牙（Embryo-Perc 协议）
-│   ├── oled/                    # ST7735 TFT 显示 + 中文/ASCII 字库
-│   ├── keypad/                  # 3×3 矩阵键盘扫描
-│   ├── touch/                   # 电容触摸（高Mi）
-│   ├── button/                  # 模式切换按键
-│   ├── led/                     # LED（预留）
-│   └── wifi_app/                # Wi-Fi（预留）
+│   ├── nv3007/                  # NV3007 屏幕驱动（142×428）
+│   ├── oled/                    # 绘制层：帧缓冲 + 中文/ASCII 竖排字库
+│   ├── audio/                   # 音频：I2S + 采样回放 + 变调
+│   │   └── piano_samples.c     # ★ 10 个钢琴采样数组（勿删）
+│   ├── keypad/                  # 3×3 矩阵键盘
+│   ├── touch/                   # 电容触摸 4 键（高音区）
+│   ├── led_bar/                 # WS2812 灯带 13 灯
+│   ├── ble_app/                 # BLE（默认关闭）
+│   └── button/                  # 模式切换键
 └── tools/
     ├── build.bat                # 一键编译烧录
     ├── convert_mp3_to_samples.py # MP3 → 钢琴采样 C 数组
     └── gen_piano_samples.py     # 物理建模生成采样（备选）
 ```
 
-> **注意**：`piano_samples.c`（约 5MB）是真实钢琴录音转换的采样数组，编译必需。源素材 MP3（`88钢琴按键音/`）不入库。
-
 ---
 
 ## 修改指南
 
-| 想改什么 | 改哪里 |
-|----------|--------|
-| 屏幕引脚 | [`components/oled/oled.h`](components/oled/oled.h) |
-| 音频引脚/音量 | [`components/audio/audio.h`](components/audio/audio.h) |
-| 音符频率 | [`components/audio/audio.h`](components/audio/audio.h) 的 `NOTE_*` 宏 |
-| 矩阵行列引脚 | [`components/keypad/keypad.c`](components/keypad/keypad.c) |
-| 触摸通道 | [`components/touch/touch.c`](components/touch/touch.c) |
-| 模式切换/按键逻辑 | [`main/main.c`](main/main.c) |
-| BLE 设备名/UUID | [`components/ble_app/ble_app.c`](components/ble_app/ble_app.c) |
+| 想改什么 | 位置 |
+|----------|------|
+| 屏幕方向/引脚 | [`components/nv3007/nv3007.h`](components/nv3007/nv3007.h) |
+| 音符频率 | [`components/audio/audio.h`](components/audio/audio.h) |
+| 乐谱 | [`main/main.c`](main/main.c) 的 `SCORE[]` 数组 |
+| 触摸灵敏度 | [`components/touch/touch.c`](components/touch/touch.c) 的 `TOUCH_THRESH` |
+| 蓝牙开关 | [`main/main.c`](main/main.c) 的 `BLE_ENABLED` |
+| 灯带颜色 | [`components/led_bar/led_bar.c`](components/led_bar/led_bar.c) |
 
 ---
 
 ## 常见问题
 
 **Q: 编译报错 `app partition is too small`？**
-A: 固件含采样数据约 2MB，需用自定义分区表。确认 `sdkconfig` 里 `CONFIG_PARTITION_TABLE_CUSTOM=y`，或删除 `sdkconfig` 让它从 `sdkconfig.defaults` 重新生成。
+A: 固件含 1.3MB 采样，需自定义分区表。确认 `sdkconfig` 里 `CONFIG_PARTITION_TABLE_CUSTOM=y`，或删 `sdkconfig` 从默认重新生成。
 
-**Q: 按键出来是重复的 / 多出音？**
-A: 先看串口日志（`flash monitor`）按每个键，观察 `弹奏: xxx (key=N, row=R, col=C)`：
-- 若**按一个键出现两个不同的 key/row/col** → 硬件接线问题（按键短路或行/列线共用），检查新增的 GPIO21 第三行接线。
-- 若**松开后多出 key=10** → 触摸误触发，检查 GPIO14 是否被金属物靠近。
+**Q: 屏幕白屏/花屏？**
+A: NV3007 屏幕初始化较复杂。先确认接线（8 脚），再查 `nv3007.h` 的 MADCTL 方向配置。
 
-**Q: 烧录后屏幕不显示？**
-A: 检查 ST7735 接线（SCLK=2, SDA=1, DC=42, RST=41, CS=40）。注意是 **SPI 屏**不是 I²C。
+**Q: 触摸误触发？**
+A: 检查触摸引脚接线是否稳定。`TOUCH_THRESH`（灵敏度）和基线调整逻辑在 `touch.c`。
 
-**Q: 没声音？**
-A: 确认模式在"电子琴"（默认），按矩阵键应有音。检查 MAX98357A 接线（BCLK=48, LRCLK=45, DIN=47），以及音量电位器是否调大。
-
-**Q: 怎么确认蓝牙工作？**
-A: 切到"蓝牙模式"，屏幕应显示"蓝牙模式/等待中..."。用手机/Chrome 扫描 BLE，应看到设备名 **Embryo-Perc**，连接后屏幕变"已连接"。
+**Q: 蓝牙怎么开？**
+A: `main/main.c` 里 `#define BLE_ENABLED 1`，重新编译烧录。
 
 ---
 
@@ -180,9 +172,10 @@ A: 切到"蓝牙模式"，屏幕应显示"蓝牙模式/等待中..."。用手机
 
 | 功能 | 状态 |
 |------|------|
-| 5 模式 + 电子琴 + 乐谱 | ✅ 完成 |
-| 真实钢琴采样 | ✅ 完成 |
-| BLE 连接（Embryo-Perc） | ✅ 完成（收曲/时间轴待实现） |
+| 4 模式 + 电子琴 + 乐谱 | ✅ |
+| 真实钢琴采样 + 变调 | ✅ |
+| 多音复音（和弦） | ✅ |
+| 触摸 4 键高音区 | ✅ |
+| WS2812 灯带跟随 | ✅ |
+| 蓝牙连接 | ◇ 默认关，可开启 |
 | 架子鼓/吉他音色 | ◇ 待实现 |
-| 蓝牙收曲 + 时间轴演奏 | ◇ 待实现 |
-| LED 灯带引导 | ◇ 待实现 |

@@ -1,6 +1,7 @@
 /**
  * ==============================================================
- * Touch 电容触摸 — 1 通道 (TOUCH14 → GPIO14 = 高Mi)
+ * Touch 电容触摸 — 4 通道 (TOUCH11~14 → GPIO11~14)
+ * 高Mi(10) 高Fa(11) 高Sol(12) 高La(13)
  * ==============================================================
  */
 
@@ -12,9 +13,9 @@
 
 static const char *TAG = "touch";
 
-/* 通道映射: TOUCH14 → 返回 key 10 */
-static const int CHANNELS[TOUCH_NUM] = { 14 };
-static const int KEY_MAP[TOUCH_NUM]  = { 10 };  /* 高Mi */
+/* 通道映射: TOUCH11/12/13/14 → key 10/11/12/13 (高Mi~高La) */
+static const int CHANNELS[TOUCH_NUM] = { 9, 10, 11, 12 };
+static const int KEY_MAP[TOUCH_NUM]  = { 10, 11, 12, 13 };
 
 static touch_sensor_handle_t g_sens = NULL;
 static touch_channel_handle_t g_chan[TOUCH_NUM];
@@ -23,7 +24,7 @@ static int g_calibrated = 0;
 
 esp_err_t touch_init(void)
 {
-    ESP_LOGI(TAG, "初始化 1 键触摸 (GPIO14=高Mi)...");
+    ESP_LOGI(TAG, "初始化 4 键触摸 (GPIO11-14 = 高Mi~高La)...");
 
     touch_sensor_sample_config_t s_cfg =
         TOUCH_SENSOR_V2_DEFAULT_SAMPLE_CONFIG(500, TOUCH_VOLT_LIM_L_0V5, TOUCH_VOLT_LIM_H_2V7);
@@ -57,37 +58,53 @@ esp_err_t touch_init(void)
 }
 
 /* 触摸防误触：阈值 + 连续确认 */
-#define TOUCH_THRESH     4        /* val > baseline*4 才判定为按下 */
+#define TOUCH_THRESH     2        /* val > baseline*2 才判定为按下（灵敏度） */
 #define TOUCH_CONFIRM    3        /* 连续 3 次超阈值才真正触发 */
 
-static int g_confirm = 0;
-static int g_touch_state = 0;
+static int g_confirm[TOUCH_NUM];
+static int g_touch_state[TOUCH_NUM];
 
 int touch_get_key(void)
 {
     if (!g_calibrated) return 0;
 
-    uint32_t val;
-    if (touch_channel_read_data(g_chan[0], TOUCH_CHAN_DATA_TYPE_SMOOTH, &val) != ESP_OK)
-        return 0;
+    int best = 0;
+    for (int i = 0; i < TOUCH_NUM; i++) {
+        uint32_t val;
+        if (touch_channel_read_data(g_chan[i], TOUCH_CHAN_DATA_TYPE_SMOOTH, &val) != ESP_OK)
+            continue;
 
-    if (val > g_baseline[0] * TOUCH_THRESH) {
-        /* 连续确认：防偶发误触（如手靠近/环境干扰） */
-        if (g_confirm < TOUCH_CONFIRM) {
-            g_confirm++;
+        if (val > g_baseline[i] * TOUCH_THRESH) {
+            /* 连续确认：防偶发误触（如手靠近/环境干扰） */
+            if (g_confirm[i] < TOUCH_CONFIRM) {
+                g_confirm[i]++;
+            } else {
+                g_touch_state[i] = 1;
+            }
         } else {
-            g_touch_state = 1;
+            g_confirm[i] = 0;
+            g_touch_state[i] = 0;
         }
-    } else {
-        g_confirm = 0;
-        g_touch_state = 0;
+
+        /* 未触摸时缓慢更新基线 */
+        if (val < g_baseline[i] * 2)
+            g_baseline[i] = (g_baseline[i] * 99 + val) / 100;
+        else if (val < g_baseline[i] / 2)
+            g_baseline[i] = val;  /* 基线被污染，立即复位 */
+
+        if (g_touch_state[i])
+            best = KEY_MAP[i];
     }
 
-    /* 未触摸时缓慢更新基线 */
-    if (val < g_baseline[0] * 2)
-        g_baseline[0] = (g_baseline[0] * 99 + val) / 100;
-    else if (val < g_baseline[0] / 2)
-        g_baseline[0] = val;  /* 基线被污染，立即复位 */
+    return best;
+}
 
-    return g_touch_state ? KEY_MAP[0] : 0;
+void touch_print_raw(void)
+{
+    if (!g_calibrated) return;
+    for (int i = 0; i < TOUCH_NUM; i++) {
+        uint32_t val = 0;
+        touch_channel_read_data(g_chan[i], TOUCH_CHAN_DATA_TYPE_SMOOTH, &val);
+        ESP_LOGI(TAG, "TOUCH%d(key%d): raw=%u baseline=%u", CHANNELS[i], KEY_MAP[i], val, g_baseline[i]);
+    }
 }

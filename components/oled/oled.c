@@ -10,6 +10,8 @@
 #include <stdio.h>
 #include "esp_log.h"
 #include "esp_check.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #include "oled.h"
 #include "cn_font.h"
@@ -20,10 +22,9 @@ static const char *TAG = "oled";
 #define WHITE  0xFFFF
 #define BLACK  0x0000
 
-/* 中央统一刷新区域（48 行）：center_text 和 two_lines 共用，
- * 避免各自不同区域导致切换模式时内容残留 */
-#define OLED_CENTER_Y0   ((OLED_HEIGHT - 48) / 2)
-#define OLED_CENTER_Y1   (OLED_CENTER_Y0 + 47)
+/* 中央竖排文字列区域（覆盖中文字和 ASCII，防残留） */
+#define VERT_X0   ((OLED_WIDTH - 32) / 2)
+#define VERT_X1   (VERT_X0 + 31)
 
 /* 全屏帧缓冲 142x428 RGB565 = 122KB */
 static uint16_t g_fb[OLED_WIDTH * OLED_HEIGHT];
@@ -144,16 +145,9 @@ static uint8_t utf8_len(uint8_t b) {
     return 0;
 }
 
-static uint8_t text_width(const char *s) {
-    uint8_t w = 0;
-    while (*s) {
-        uint8_t l = utf8_len(*s);
-        if (l == 1) { w += FONT_ASC_WIDTH; s++; }
-        else if (l == 3) { w += FONT_CN_WIDTH; s += 3; }
-        else s++;
-    }
-    return w;
-}
+/* 竖排辅助函数前向声明（供 oled_draw_two_lines 等先调用） */
+static int text_vertical_height(const char *text);
+static void draw_vertical_text(int x, int y, const char *text);
 
 /* ==============================================================
  * 公开 API
@@ -178,18 +172,18 @@ void oled_clear(void)
 
 void oled_draw_two_lines(const char *l1, const char *l2)
 {
-    uint8_t w1 = text_width(l1);
-    uint8_t w2 = text_width(l2);
-    uint8_t sx1 = (w1 < OLED_WIDTH) ? (OLED_WIDTH - w1) / 2 : 0;
-    uint8_t sx2 = (w2 < OLED_WIDTH) ? (OLED_WIDTH - w2) / 2 : 0;
-    uint8_t y1 = OLED_CENTER_Y0 + 4;   /* 第一行 */
-    uint8_t y2 = y1 + 22;              /* 第二行 */
+    /* 两段文字竖排在同一列，中间留 20px 间隔 */
+    int h1 = text_vertical_height(l1);
+    int h2 = text_vertical_height(l2);
+    int gap = 20;
+    int total = h1 + gap + h2;
+    uint8_t sx = (OLED_WIDTH - FONT_CN_WIDTH) / 2;
+    uint8_t sy = (total < OLED_HEIGHT) ? (OLED_HEIGHT - total) / 2 : 0;
 
-    fb_clear_region(0, OLED_CENTER_Y0, OLED_WIDTH - 1, OLED_CENTER_Y1);
-    oled_draw_text(sx1, y1, l1);
-    oled_draw_text(sx2, y2, l2);
-    nv3007_draw_region(0, OLED_CENTER_Y0, OLED_WIDTH - 1, OLED_CENTER_Y1,
-                       &g_fb[OLED_CENTER_Y0 * OLED_WIDTH]);
+    fb_clear_region(VERT_X0, 0, VERT_X1, OLED_HEIGHT - 1);
+    draw_vertical_text(sx, sy, l1);
+    draw_vertical_text(sx, sy + h1 + gap, l2);
+    nv3007_draw_region(0, 0, OLED_WIDTH - 1, OLED_HEIGHT - 1, g_fb);
 }
 
 void oled_draw_vol(uint8_t pct)
@@ -230,15 +224,46 @@ void oled_draw_text(uint8_t x, uint8_t y, const char *text)
     }
 }
 
+/* 竖排文字总高度：中文16px/字，ASCII 8px/字符 */
+static int text_vertical_height(const char *text)
+{
+    int h = 0;
+    while (*text) {
+        uint8_t l = utf8_len(*text);
+        if (l == 3) { h += FONT_CN_WIDTH; text += 3; }
+        else if (l == 1) { h += 8; text++; }
+        else text++;
+    }
+    return h;
+}
+
+/* 竖排绘制到帧缓冲（x 固定，y 从上到下递增） */
+static void draw_vertical_text(int x, int y, const char *text)
+{
+    uint8_t cy = y;
+    while (*text && cy + 8 <= OLED_HEIGHT) {
+        uint8_t l = utf8_len(*text);
+        if (l == 1) {
+            draw_asc(x, cy, *text);
+            cy += 8;
+            text++;
+        } else if (l == 3) {
+            const uint8_t *bm = cn_font_lookup((uint8_t)text[0], (uint8_t)text[1], (uint8_t)text[2]);
+            draw_cn(x, cy, bm);
+            cy += FONT_CN_WIDTH;
+            text += 3;
+        } else text++;
+    }
+}
+
 void oled_draw_center_text(const char *text)
 {
-    uint8_t tw = text_width(text);
-    uint8_t sx = (tw < OLED_WIDTH) ? (OLED_WIDTH - tw) / 2 : 0;
-    /* 在统一中央区域内垂直居中 */
-    uint8_t sy = OLED_CENTER_Y0 + (48 - 16) / 2;
+    int total_h = text_vertical_height(text);
+    uint8_t sx = (OLED_WIDTH - FONT_CN_WIDTH) / 2;   /* 中文字居中 */
+    uint8_t sy = (total_h < OLED_HEIGHT) ? (OLED_HEIGHT - total_h) / 2 : 0;
 
-    fb_clear_region(0, OLED_CENTER_Y0, OLED_WIDTH - 1, OLED_CENTER_Y1);
-    oled_draw_text(sx, sy, text);
-    nv3007_draw_region(0, OLED_CENTER_Y0, OLED_WIDTH - 1, OLED_CENTER_Y1,
-                       &g_fb[OLED_CENTER_Y0 * OLED_WIDTH]);
+    /* 清中央文字列（保留右上角音量），竖排绘制后整屏刷新防残留 */
+    fb_clear_region(VERT_X0, 0, VERT_X1, OLED_HEIGHT - 1);
+    draw_vertical_text(sx, sy, text);
+    nv3007_draw_region(0, 0, OLED_WIDTH - 1, OLED_HEIGHT - 1, g_fb);
 }

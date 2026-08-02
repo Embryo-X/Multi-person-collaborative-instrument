@@ -23,17 +23,18 @@
 #define NV3007_CS_IO      GPIO_NUM_40    /* 片选 */
 #define NV3007_BL_IO      GPIO_NUM_9     /* 背光 */
 
-/* ========== 分辨率 ========== */
+/* ========== 分辨率 ==========
+ * rotation 0 (竖屏): 142x428 */
 #define NV3007_WIDTH      142
 #define NV3007_HEIGHT     428
-#define NV3007_X_OFFSET   14    /* 厂商窗口 X 偏移（方向 0xC0 时为 14） */
+#define NV3007_X_OFFSET   12    /* rotation 0(0x00): X+12 */
+#define NV3007_Y_OFFSET   0     /* Y 不偏移 */
 
 /* ========== 扫描方向 MADCTL ==========
- * 官方 WH-279-05 例程: USE_HORIZONTAL
- *   0 → 0x00 (正常)  1 → 0xC0 (180°翻转)
- *   2 → 0x60 (90°)   3 → 0xA0 (270°)
- * 对应窗口偏移: 0→X+12  1→X+14  2→Y+14  3→Y+12 */
-#define NV3007_MADCTL     0xC0   /* 180°翻转 */
+ * BadApple Arduino 驱动 rotation 映射:
+ *   0: 0x00 (X+12,Y+0)   1: 0x60 (X+0,Y+12)
+ *   2: 0xC0 (X+14,Y+0)   3: 0xA0 (X+0,Y+14) */
+#define NV3007_MADCTL     0x00   /* rotation 0（竖屏，BadApple 官方验证） */
 
 /* ========== API ========== */
 esp_err_t nv3007_init(void);

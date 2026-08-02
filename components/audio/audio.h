@@ -33,6 +33,9 @@
 #define NOTE_DO2            523
 #define NOTE_RE2            587
 #define NOTE_MI2            659
+#define NOTE_HIFA           698
+#define NOTE_HISOL          784
+#define NOTE_HILA           880
 #define NOTE_SILENCE        0
 
 esp_err_t audio_init(void);

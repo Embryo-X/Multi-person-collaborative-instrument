@@ -31,18 +31,19 @@ static const char *TAG = "main";
 #define DO_LED_PIN    GPIO_NUM_15
 #define RE_LED_PIN    GPIO_NUM_16
 
-#define MODE_COUNT      5
+#define BLE_ENABLED     0   /* 0=蓝牙常关，1=启动即开 */
+#define MODE_COUNT      4
 #define SCORE_LOOPS      2
 #define SCORE_TOTAL      (SCORE_LEN * SCORE_LOOPS)
 
 static const char *MODE_TEXTS[] = {
-    "架子鼓模式", "吉他模式", "电子琴模式", "乐谱模式", "蓝牙模式",
+    "架子鼓模式", "电子琴模式", "乐谱模式", "蓝牙模式",
 };
 
-static const uint32_t NOTE_FREQS[] = { 0, NOTE_DO, NOTE_RE, NOTE_MI, NOTE_FA, NOTE_SOL, NOTE_LA, NOTE_SI, NOTE_DO2, NOTE_RE2, NOTE_MI2 };
-static const char *NOTE_NAMES[]     = { "", "Do", "Re", "Mi", "Fa", "Sol", "La", "Si", "HiDo", "HiRe", "HiMi" };
-static const int SCORE[] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
-#define SCORE_LEN        10
+static const uint32_t NOTE_FREQS[] = { 0, NOTE_DO, NOTE_RE, NOTE_MI, NOTE_FA, NOTE_SOL, NOTE_LA, NOTE_SI, NOTE_DO2, NOTE_RE2, NOTE_MI2, NOTE_HIFA, NOTE_HISOL, NOTE_HILA };
+static const char *NOTE_NAMES[]     = { "", "Do", "Re", "Mi", "Fa", "Sol", "La", "Si", "HiDo", "HiRe", "HiMi", "HiFa", "HiSol", "HiLa" };
+static const int SCORE[] = {1,1,5,5,6,6,5}; 
+#define SCORE_LEN        7
 
 static uint8_t current_mode = 0;
 static uint16_t g_last_mask = 0;   /* 上一次按下的键位掩码（多键） */
@@ -62,7 +63,9 @@ void app_main(void)
     touch_init();
     audio_init();
     led_bar_init();   /* WS2812 灯带 */
-    ble_app_init();   /* 启动时初始化 BLE，所有模式下保持连接 */
+#if BLE_ENABLED
+    ble_app_init();   /* 蓝牙常关，仅在宏开启时初始化 */
+#endif
 
     gpio_reset_pin(DO_LED_PIN);
     gpio_set_direction(DO_LED_PIN, GPIO_MODE_OUTPUT);
@@ -78,7 +81,8 @@ void app_main(void)
     while (1) {
         /* 采集所有同时按下的键（矩阵 + 触摸），位掩码表示 */
         uint16_t mask = keypad_get_pressed_mask();
-        if (touch_get_key()) mask |= (1u << 10);
+        int tk = touch_get_key();
+        if (tk) mask |= (1u << tk);
         uint16_t new_keys = mask & ~g_last_mask;    /* 本次新按下的键 */
         uint16_t released = g_last_mask & ~mask;    /* 本次松开的键 */
         g_last_mask = mask;
@@ -100,18 +104,17 @@ void app_main(void)
         switch (current_mode) {
 
         case 0: /* 架子鼓 */
-        case 1: /* 吉他 */
             audio_stop();
             led_bar_clear();
             gpio_set_level(DO_LED_PIN, 0);
             gpio_set_level(RE_LED_PIN, 0);
             break;
 
-        case 2: /* 电子琴：支持多键同时按下 → 和弦，灯带跟随按键 */
+        case 1: /* 电子琴：支持多键同时按下 → 和弦，灯带跟随按键 */
             gpio_set_level(DO_LED_PIN, 0);
             gpio_set_level(RE_LED_PIN, 0);
             led_bar_show_keys(mask);   /* 按下的音键点亮对应灯珠 */
-            for (int k = 1; k <= 10; k++) {
+            for (int k = 1; k <= 13; k++) {
                 if (new_keys & (1u << k)) {
                     audio_play_freq(NOTE_FREQS[k]);
                     oled_draw_center_text(NOTE_NAMES[k]);   /* 显示最后按下的音名 */
@@ -122,9 +125,9 @@ void app_main(void)
             }
             break;
 
-        case 3: /* 乐谱 */
-            led_bar_clear();
+        case 2: /* 乐谱 */
             if (score_done) {
+                led_bar_clear();
                 oled_draw_center_text("完成");
                 audio_stop();
                 break;
@@ -134,6 +137,7 @@ void app_main(void)
             gpio_set_level(DO_LED_PIN, (target == 1) ? 1 : 0);
             gpio_set_level(RE_LED_PIN, (target == 2) ? 1 : 0);
             oled_draw_center_text(NOTE_NAMES[target]);
+            led_bar_show_keys(1u << target);   /* 提示该按的键 → 对应灯珠亮 */
 
             if ((new_keys & (1u << target))) {
                 audio_play_freq(NOTE_FREQS[target]);
@@ -147,21 +151,25 @@ void app_main(void)
                 }
             }
             /* 松开的键停音 */
-            for (int k = 1; k <= 10; k++)
+            for (int k = 1; k <= 13; k++)
                 if (released & (1u << k))
                     audio_stop_freq(NOTE_FREQS[k]);
             }
             break;
 
-        case 4: { /* 蓝牙 */
+        case 3: { /* 蓝牙 */
             gpio_set_level(DO_LED_PIN, 0);
             gpio_set_level(RE_LED_PIN, 0);
             audio_stop();
             led_bar_clear();
+#if BLE_ENABLED
             if (ble_app_is_connected())
                 oled_draw_two_lines("蓝牙模式", "已连接");
             else
                 oled_draw_two_lines("蓝牙模式", "等待中...");
+#else
+            oled_draw_two_lines("蓝牙模式", "等待中...");
+#endif
             break;
         }
 
@@ -173,6 +181,7 @@ void app_main(void)
                 vol_tick = 0;
                 audio_update_volume();
                 oled_draw_vol(audio_get_volume());
+                touch_print_raw();   /* 调试：打印触摸电压变化 */
             }
         }
 
