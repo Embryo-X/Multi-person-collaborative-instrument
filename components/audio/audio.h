@@ -39,7 +39,8 @@
 #define NOTE_SILENCE        0
 
 esp_err_t audio_init(void);
-void audio_play_freq(uint32_t freq_hz);  /* 触发一个音符（支持多音叠加） */
+void audio_play_freq(uint32_t freq_hz);  /* 触发一个音符（钢琴，支持多音叠加） */
+void audio_play_drum(int key);           /* 触发架子鼓音色（key 1~9） */
 void audio_stop_freq(uint32_t freq_hz);  /* 停止指定音符 */
 void audio_stop(void);                    /* 停止所有音符 */
 void audio_set_volume(uint8_t pct);

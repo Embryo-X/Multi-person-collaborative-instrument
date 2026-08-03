@@ -58,3 +58,10 @@ BadAppleESP32S3/
 1.txt
 build_err.txt
 build_out.txt
+
+# 音频/素材测试文件（生成的 C 数组才是编译需要的）
+*.wav
+*.mp3
+*.mid
+*.midi
+*.rar

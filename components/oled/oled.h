@@ -13,8 +13,8 @@
 #include "esp_err.h"
 
 /* --- 分辨率（与 nv3007 组件一致，rotation 1 横屏） --- */
-#define OLED_WIDTH       142
-#define OLED_HEIGHT      428
+#define OLED_WIDTH       428
+#define OLED_HEIGHT      142
 
 /* --- 字宽 --- */
 #define FONT_ASC_WIDTH   6

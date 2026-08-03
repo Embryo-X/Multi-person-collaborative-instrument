@@ -96,18 +96,6 @@ static void fb_fill(uint16_t c) {
         g_fb[i] = c;
 }
 
-/* 清一个矩形区域为黑 */
-static void fb_clear_region(int x0, int y0, int x1, int y1)
-{
-    if (x0 < 0) x0 = 0;
-    if (y0 < 0) y0 = 0;
-    if (x1 >= OLED_WIDTH) x1 = OLED_WIDTH - 1;
-    if (y1 >= OLED_HEIGHT) y1 = OLED_HEIGHT - 1;
-    for (int y = y0; y <= y1; y++)
-        for (int x = x0; x <= x1; x++)
-            g_fb[y * OLED_WIDTH + x] = BLACK;
-}
-
 /* ---- 画 ASCII 字符到帧缓冲 ---- */
 static void draw_asc(int x0, int y0, char ch)
 {
@@ -145,9 +133,17 @@ static uint8_t utf8_len(uint8_t b) {
     return 0;
 }
 
-/* 竖排辅助函数前向声明（供 oled_draw_two_lines 等先调用） */
-static int text_vertical_height(const char *text);
-static void draw_vertical_text(int x, int y, const char *text);
+/* 文本横排宽度：中文16px/字，ASCII 6px/字符 */
+static uint8_t text_width(const char *s) {
+    uint8_t w = 0;
+    while (*s) {
+        uint8_t l = utf8_len(*s);
+        if (l == 1) { w += FONT_ASC_WIDTH; s++; }
+        else if (l == 3) { w += FONT_CN_WIDTH; s += 3; }
+        else s++;
+    }
+    return w;
+}
 
 /* ==============================================================
  * 公开 API
@@ -172,17 +168,17 @@ void oled_clear(void)
 
 void oled_draw_two_lines(const char *l1, const char *l2)
 {
-    /* 两段文字竖排在同一列，中间留 20px 间隔 */
-    int h1 = text_vertical_height(l1);
-    int h2 = text_vertical_height(l2);
-    int gap = 20;
-    int total = h1 + gap + h2;
-    uint8_t sx = (OLED_WIDTH - FONT_CN_WIDTH) / 2;
-    uint8_t sy = (total < OLED_HEIGHT) ? (OLED_HEIGHT - total) / 2 : 0;
+    /* 两行横排居中（横屏） */
+    int w1 = text_width(l1);
+    int w2 = text_width(l2);
+    int sx1 = (w1 < OLED_WIDTH) ? (OLED_WIDTH - w1) / 2 : 0;
+    int sx2 = (w2 < OLED_WIDTH) ? (OLED_WIDTH - w2) / 2 : 0;
+    int sy1 = (OLED_HEIGHT - 40) / 2;
+    int sy2 = sy1 + 22;
 
-    fb_clear_region(VERT_X0, 0, VERT_X1, OLED_HEIGHT - 1);
-    draw_vertical_text(sx, sy, l1);
-    draw_vertical_text(sx, sy + h1 + gap, l2);
+    fb_fill(BLACK);
+    oled_draw_text((uint8_t)sx1, (uint8_t)sy1, l1);
+    oled_draw_text((uint8_t)sx2, (uint8_t)sy2, l2);
     nv3007_draw_region(0, 0, OLED_WIDTH - 1, OLED_HEIGHT - 1, g_fb);
 }
 
@@ -208,7 +204,7 @@ void oled_refresh(void)
 
 void oled_draw_text(uint8_t x, uint8_t y, const char *text)
 {
-    uint8_t cx = x;
+    int cx = x;
     while (*text && cx < OLED_WIDTH) {
         uint8_t l = utf8_len(*text);
         if (l == 1) {
@@ -224,46 +220,14 @@ void oled_draw_text(uint8_t x, uint8_t y, const char *text)
     }
 }
 
-/* 竖排文字总高度：中文16px/字，ASCII 8px/字符 */
-static int text_vertical_height(const char *text)
-{
-    int h = 0;
-    while (*text) {
-        uint8_t l = utf8_len(*text);
-        if (l == 3) { h += FONT_CN_WIDTH; text += 3; }
-        else if (l == 1) { h += 8; text++; }
-        else text++;
-    }
-    return h;
-}
-
-/* 竖排绘制到帧缓冲（x 固定，y 从上到下递增） */
-static void draw_vertical_text(int x, int y, const char *text)
-{
-    uint8_t cy = y;
-    while (*text && cy + 8 <= OLED_HEIGHT) {
-        uint8_t l = utf8_len(*text);
-        if (l == 1) {
-            draw_asc(x, cy, *text);
-            cy += 8;
-            text++;
-        } else if (l == 3) {
-            const uint8_t *bm = cn_font_lookup((uint8_t)text[0], (uint8_t)text[1], (uint8_t)text[2]);
-            draw_cn(x, cy, bm);
-            cy += FONT_CN_WIDTH;
-            text += 3;
-        } else text++;
-    }
-}
-
 void oled_draw_center_text(const char *text)
 {
-    int total_h = text_vertical_height(text);
-    uint8_t sx = (OLED_WIDTH - FONT_CN_WIDTH) / 2;   /* 中文字居中 */
-    uint8_t sy = (total_h < OLED_HEIGHT) ? (OLED_HEIGHT - total_h) / 2 : 0;
+    /* 横排黑底白字居中（横屏） */
+    int tw = text_width(text);
+    int sx = (tw < OLED_WIDTH) ? (OLED_WIDTH - tw) / 2 : 0;
+    int sy = (OLED_HEIGHT - 16) / 2;
 
-    /* 清中央文字列（保留右上角音量），竖排绘制后整屏刷新防残留 */
-    fb_clear_region(VERT_X0, 0, VERT_X1, OLED_HEIGHT - 1);
-    draw_vertical_text(sx, sy, text);
+    fb_fill(BLACK);
+    oled_draw_text((uint8_t)sx, (uint8_t)sy, text);
     nv3007_draw_region(0, 0, OLED_WIDTH - 1, OLED_HEIGHT - 1, g_fb);
 }

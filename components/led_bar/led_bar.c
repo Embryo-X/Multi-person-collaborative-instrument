@@ -84,13 +84,26 @@ static void send_all(void)
     vTaskDelay(pdMS_TO_TICKS(1));   /* WS2812 复位: >50us 低电平 */
 }
 
+/* 每键固定颜色（彩虹色，GRB 顺序） */
+static const grb_t KEY_COLORS[LED_BAR_COUNT] = {
+    {  0, 255,   0 },   /* key1 红    Do   */
+    {128, 255,   0 },   /* key2 橙    Re   */
+    {  0, 255, 255 },   /* key3 黄    Mi   */
+    {255,   0,   0 },   /* key4 绿    Fa   */
+    {255,   0, 255 },   /* key5 青    Sol  */
+    {  0,   0, 255 },   /* key6 蓝    La   */
+    {255,   0, 128 },   /* key7 紫    Si   */
+    {  0, 128, 255 },   /* key8 粉    高Do */
+    {255, 255, 255 },   /* key9 白    高Re */
+};
+
 void led_bar_show_keys(uint16_t key_mask)
 {
     for (int i = 0; i < LED_BAR_COUNT; i++) {
         if (key_mask & (1u << (i + 1))) {
-            g_colors[i].g = 255;  g_colors[i].r = 0;  g_colors[i].b = 0;  /* 亮绿 */
+            g_colors[i] = KEY_COLORS[i];   /* 每个键固定颜色 */
         } else {
-            g_colors[i].g = 0;  g_colors[i].r = 0;  g_colors[i].b = 0;    /* 灭 */
+            g_colors[i].g = 0;  g_colors[i].r = 0;  g_colors[i].b = 0;   /* 灭 */
         }
     }
     send_all();

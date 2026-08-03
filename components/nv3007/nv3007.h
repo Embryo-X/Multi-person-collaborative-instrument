@@ -24,17 +24,17 @@
 /* 背光 BLK 直接接 3.3V 常亮，不用 GPIO 控制 */
 
 /* ========== 分辨率 ==========
- * rotation 0 (竖屏): 142x428 */
-#define NV3007_WIDTH      142
-#define NV3007_HEIGHT     428
-#define NV3007_X_OFFSET   12    /* rotation 0(0x00): X+12 */
-#define NV3007_Y_OFFSET   0     /* Y 不偏移 */
+ * rotation 1 (横屏, 1.txt 风格): 428x142 */
+#define NV3007_WIDTH      428
+#define NV3007_HEIGHT     142
+#define NV3007_X_OFFSET   0     /* rotation 1(0x60): 偏移在Y轴 */
+#define NV3007_Y_OFFSET   12    /* rotation 1(0x60): Y+12 */
 
 /* ========== 扫描方向 MADCTL ==========
  * BadApple Arduino 驱动 rotation 映射:
  *   0: 0x00 (X+12,Y+0)   1: 0x60 (X+0,Y+12)
  *   2: 0xC0 (X+14,Y+0)   3: 0xA0 (X+0,Y+14) */
-#define NV3007_MADCTL     0x00   /* rotation 0（竖屏，BadApple 官方验证） */
+#define NV3007_MADCTL     0x60   /* rotation 1（横屏，1.txt 风格） */
 
 /* ========== API ========== */
 esp_err_t nv3007_init(void);
@@ -42,7 +42,15 @@ esp_err_t nv3007_init(void);
 /* 全屏填充一个颜色 */
 void nv3007_fill_screen(uint16_t color);
 
-/* 只刷新指定矩形区域 (坐标自动加 X 偏移) */
-void nv3007_draw_region(int x0, int y0, int x1, int y1, const uint16_t *data);
+/* 只刷新指定矩形区域 (坐标自动加 X 偏移；内部做 RGB565 字节交换) */
+void nv3007_draw_region(int x0, int y0, int x1, int y1, uint16_t *data);
+
+/* ========== 三栏英文 UI（1.txt 风格，自带宽屏 fb + 6x8 字体缩放）========== */
+void nv3007_ui_clear(void);
+void nv3007_ui_fill_rect(int x, int y, int w, int h, uint16_t color);
+void nv3007_ui_draw_vline(int x, int y, int h, uint16_t color);
+void nv3007_ui_panel_text(const char *text, int16_t left, int16_t right,
+                          int16_t y, uint8_t size, uint16_t color);
+void nv3007_ui_refresh(void);
 
 #endif

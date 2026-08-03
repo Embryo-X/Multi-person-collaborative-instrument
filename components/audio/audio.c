@@ -17,6 +17,7 @@
 
 #include "audio.h"
 #include "piano_samples.h"
+#include "drum_samples.h"
 
 static const char *TAG = "audio";
 
@@ -36,10 +37,11 @@ static int g_vol_smooth = 80;
 
 /* ---- 多声道 voice ----
  * state: 0=idle 1=attack 2=sustain 3=release
- * pos_fixed/step: 16.16 定点播放位置，支持变调（无采样音符用最高音变速） */
+ * 通用采样（钢琴/鼓共用），pos_fixed/step 支持变调 */
 typedef struct {
-    const piano_sample_t *sample;   /* 当前采样（NULL=空闲） */
-    uint32_t freq;                  /* 音符频率，stop_freq 匹配用 */
+    const int16_t *data;            /* 采样数据（NULL=空闲） */
+    uint32_t length;                /* 采样长度 */
+    uint32_t freq;                  /* 目标频率（stop_freq 匹配用），鼓=0 */
     uint32_t pos_fixed;             /* 16.16 定点采样位置 */
     uint32_t step;                  /* 16.16 定点步进（1.0 = 原速） */
     int      env;                   /* 包络 0~256 */
@@ -71,7 +73,7 @@ static void audio_task(void *arg)
                 if (vo->env >= 256) { vo->env = 256; vo->state = 2; }
                 break;
             case 2: /* sustain: 采样放完或已释放 → release */
-                if (!vo->sample || (vo->pos_fixed >> 16) >= vo->sample->length)
+                if (!vo->data || (vo->pos_fixed >> 16) >= vo->length)
                     vo->state = 3;
                 break;
             case 3: /* release: ~100ms 释音 */
@@ -79,7 +81,7 @@ static void audio_task(void *arg)
                 if (vo->env <= 0) {
                     vo->env = 0;
                     vo->state = 0;
-                    vo->sample = NULL;
+                    vo->data = NULL;
                 }
                 break;
             default:
@@ -91,9 +93,9 @@ static void audio_task(void *arg)
         memset(buf, 0, sizeof(buf));
         for (int v = 0; v < MAX_VOICES; v++) {
             voice_t *vo = &g_voices[v];
-            if (vo->state == 0 || !vo->sample) continue;
-            const int16_t *data = vo->sample->data;
-            uint32_t len = vo->sample->length;
+            if (vo->state == 0 || !vo->data) continue;
+            const int16_t *data = vo->data;
+            uint32_t len = vo->length;
             uint32_t step = vo->step;
 
             for (int i = 0; i < 128; i++) {
@@ -117,13 +119,14 @@ static void audio_task(void *arg)
 }
 
 /* 分配一个 voice 播放指定采样（step=16.16 定点播放步进） */
-static voice_t *voice_allocate(const piano_sample_t *sp, uint32_t freq, uint32_t step)
+static voice_t *voice_allocate(const int16_t *data, uint32_t length, uint32_t freq, uint32_t step)
 {
     if (step == 0) step = 1;
     /* 1. 重触发同频 voice（连奏） */
     for (int v = 0; v < MAX_VOICES; v++) {
-        if (g_voices[v].freq == freq && g_voices[v].state > 0) {
-            g_voices[v].sample = sp;
+        if (g_voices[v].freq == freq && g_voices[v].state > 0 && freq != 0) {
+            g_voices[v].data = data;
+            g_voices[v].length = length;
             g_voices[v].pos_fixed = 0;
             g_voices[v].step = step;
             g_voices[v].env = 0;
@@ -134,7 +137,8 @@ static voice_t *voice_allocate(const piano_sample_t *sp, uint32_t freq, uint32_t
     /* 2. 找空闲 voice */
     for (int v = 0; v < MAX_VOICES; v++) {
         if (g_voices[v].state == 0) {
-            g_voices[v].sample = sp;
+            g_voices[v].data = data;
+            g_voices[v].length = length;
             g_voices[v].freq = freq;
             g_voices[v].pos_fixed = 0;
             g_voices[v].step = step;
@@ -145,7 +149,8 @@ static voice_t *voice_allocate(const piano_sample_t *sp, uint32_t freq, uint32_t
     }
     /* 3. 全忙：轮转替换（新的优先于最旧） */
     uint32_t v = g_voice_next++ % MAX_VOICES;
-    g_voices[v].sample = sp;
+    g_voices[v].data = data;
+    g_voices[v].length = length;
     g_voices[v].freq = freq;
     g_voices[v].pos_fixed = 0;
     g_voices[v].step = step;
@@ -228,7 +233,15 @@ void audio_play_freq(uint32_t freq_hz)
 
     /* 16.16 定点播放步进 = 目标频率 / 采样频率 */
     uint32_t step = (uint32_t)(((uint64_t)freq_hz << 16) / sample_freq);
-    voice_allocate(sp, freq_hz, step);
+    voice_allocate(sp->data, sp->length, freq_hz, step);
+}
+
+void audio_play_drum(int key)
+{
+    /* 架子鼓：key 1~9 对应 drum_samples[0..8]，原速播放 */
+    if (key < 1 || key > 9) return;
+    const drum_sample_t *d = &g_drum_samples[key - 1];
+    voice_allocate(d->data, d->length, 0, 0x10000);   /* step 1.0 */
 }
 
 void audio_stop_freq(uint32_t freq_hz)
