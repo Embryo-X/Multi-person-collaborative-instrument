@@ -1,7 +1,9 @@
 /**
  * ==============================================================
- * LED 灯带 — WS2812 可寻址灯珠 (GPIO20)
- * RMT 驱动，9 灯珠对应矩阵键盘 9 音
+ * LED 灯带 — WS2812 可寻址灯珠（双条）
+ *   条A: GPIO20, 3 灯 → 键 1~3
+ *   条B: GPIO21, 3 灯 → 键 4~6
+ * RMT 驱动，亮起逻辑不变 (bit(i+1) → 第 i 灯, i=0..5)
  * ==============================================================
  * WS2812 时序 (10MHz RMT, 100ns/tick):
  *   0 码: 高 400ns + 低 850ns
@@ -22,44 +24,59 @@
 
 static const char *TAG = "led_bar";
 
-#define LED_BAR_PIN      GPIO_NUM_20
-#define LED_BAR_RES_HZ   (10 * 1000 * 1000)   /* 100ns/tick */
-#define BITS_PER_LED     24
+#define LED_BAR_PIN_A     GPIO_NUM_20   /* 条A: 键 1~3 */
+#define LED_BAR_PIN_B     GPIO_NUM_21   /* 条B: 键 4~6 */
+#define LED_STRIP_A_COUNT 3
+#define LED_STRIP_B_COUNT 3
+#define LED_BAR_RES_HZ    (10 * 1000 * 1000)   /* 100ns/tick */
+#define BITS_PER_LED      24
 
-static rmt_channel_handle_t g_chan = NULL;
-static rmt_encoder_handle_t g_enc = NULL;
+static rmt_channel_handle_t g_chan_a = NULL;
+static rmt_channel_handle_t g_chan_b = NULL;
+static rmt_encoder_handle_t g_enc_a = NULL;
+static rmt_encoder_handle_t g_enc_b = NULL;
 
 /* WS2812 颜色 (GRB 顺序) */
 typedef struct { uint8_t g, r, b; } grb_t;
 static grb_t g_colors[LED_BAR_COUNT];
 
-esp_err_t led_bar_init(void)
+/* 初始化一条 RMT 发送通道 */
+static esp_err_t init_channel(rmt_channel_handle_t *chan, rmt_encoder_handle_t *enc, int gpio)
 {
     rmt_tx_channel_config_t tx_cfg = {
-        .gpio_num = LED_BAR_PIN,
+        .gpio_num = gpio,
         .clk_src = RMT_CLK_SRC_DEFAULT,
         .resolution_hz = LED_BAR_RES_HZ,
-        .mem_block_symbols = 256,           /* 9*24=216 symbols 够用 */
+        .mem_block_symbols = 256,           /* 3*24=72 symbols 够用 */
         .trans_queue_depth = 4,
     };
-    ESP_RETURN_ON_ERROR(rmt_new_tx_channel(&tx_cfg, &g_chan), TAG, "rmt_new_tx_channel");
+    ESP_RETURN_ON_ERROR(rmt_new_tx_channel(&tx_cfg, chan), TAG, "rmt_new_tx_channel");
 
     rmt_copy_encoder_config_t enc_cfg = {};
-    ESP_RETURN_ON_ERROR(rmt_new_copy_encoder(&enc_cfg, &g_enc), TAG, "rmt_new_copy_encoder");
+    ESP_RETURN_ON_ERROR(rmt_new_copy_encoder(&enc_cfg, enc), TAG, "rmt_new_copy_encoder");
 
-    ESP_RETURN_ON_ERROR(rmt_enable(g_chan), TAG, "rmt_enable");
-
-    ESP_LOGI(TAG, "WS2812 灯带初始化完成 (GPIO%d, %d 灯)", LED_BAR_PIN, LED_BAR_COUNT);
+    ESP_RETURN_ON_ERROR(rmt_enable(*chan), TAG, "rmt_enable");
     return ESP_OK;
 }
 
-/* 构造并发送所有灯珠的时序 */
-static void send_all(void)
+esp_err_t led_bar_init(void)
 {
-    rmt_symbol_word_t items[LED_BAR_COUNT * BITS_PER_LED];
+    ESP_RETURN_ON_ERROR(init_channel(&g_chan_a, &g_enc_a, LED_BAR_PIN_A), TAG, "init strip A");
+    ESP_RETURN_ON_ERROR(init_channel(&g_chan_b, &g_enc_b, LED_BAR_PIN_B), TAG, "init strip B");
+
+    ESP_LOGI(TAG, "WS2812 灯带初始化完成 (GPIO20:%d灯 键1~3, GPIO21:%d灯 键4~6)",
+             LED_STRIP_A_COUNT, LED_STRIP_B_COUNT);
+    return ESP_OK;
+}
+
+/* 把 g_colors[led_start .. led_start+led_count) 打包并发送到指定通道 */
+static void send_strip(rmt_channel_handle_t chan, rmt_encoder_handle_t enc,
+                       int led_start, int led_count)
+{
+    rmt_symbol_word_t items[led_count * BITS_PER_LED];
     int idx = 0;
 
-    for (int led = 0; led < LED_BAR_COUNT; led++) {
+    for (int led = led_start; led < led_start + led_count; led++) {
         /* GRB 打包成 24 bit, 高位先发 */
         uint32_t bits = ((uint32_t)g_colors[led].g << 16) |
                         ((uint32_t)g_colors[led].r << 8) |
@@ -68,23 +85,30 @@ static void send_all(void)
         for (int b = BITS_PER_LED - 1; b >= 0; b--) {
             rmt_symbol_word_t sym = {0};
             if (bits & (1u << b)) {
-                sym.duration0 = 8;  sym.level0 = 1;  /* 1码: 850ns 高 */
-                sym.duration1 = 4;  sym.level1 = 0;  /*      400ns 低 */
+                sym.duration0 = 8;  sym.level0 = 1;   /* 1码: 850ns 高 */
+                sym.duration1 = 4;  sym.level1 = 0;   /*      400ns 低 */
             } else {
-                sym.duration0 = 4;  sym.level0 = 1;  /* 0码: 400ns 高 */
-                sym.duration1 = 8;  sym.level1 = 0;  /*      850ns 低 */
+                sym.duration0 = 4;  sym.level0 = 1;   /* 0码: 400ns 高 */
+                sym.duration1 = 8;  sym.level1 = 0;   /*      850ns 低 */
             }
             items[idx++] = sym;
         }
     }
 
     rmt_transmit_config_t txc = { .loop_count = 0 };
-    rmt_transmit(g_chan, g_enc, items, sizeof(items), &txc);
-    rmt_tx_wait_all_done(g_chan, portMAX_DELAY);
+    rmt_transmit(chan, enc, items, sizeof(items), &txc);
+    rmt_tx_wait_all_done(chan, portMAX_DELAY);
+}
+
+/* 构造并发送两条灯带全部灯珠的时序 */
+static void send_all(void)
+{
+    send_strip(g_chan_a, g_enc_a, 0,                 LED_STRIP_A_COUNT);
+    send_strip(g_chan_b, g_enc_b, LED_STRIP_A_COUNT, LED_STRIP_B_COUNT);
     vTaskDelay(pdMS_TO_TICKS(1));   /* WS2812 复位: >50us 低电平 */
 }
 
-/* 每键固定颜色（彩虹色，GRB 顺序；配对 1-9, 2-8, 3-7 同色） */
+/* 每键固定颜色（彩虹色，GRB 顺序） */
 static const grb_t KEY_COLORS[LED_BAR_COUNT] = {
     {  0, 255,   0 },   /* key1 红    Do   */
     {128, 255,   0 },   /* key2 橙    Re   */
@@ -92,18 +116,10 @@ static const grb_t KEY_COLORS[LED_BAR_COUNT] = {
     {255,   0,   0 },   /* key4 绿    Fa   */
     {255,   0, 255 },   /* key5 青    Sol  */
     {  0,   0, 255 },   /* key6 蓝    La   */
-    {  0, 255, 255 },   /* key7 = key3 黄    Si   */
-    {128, 255,   0 },   /* key8 = key2 橙    高Do */
-    {  0, 255,   0 },   /* key9 = key1 红    高Re */
 };
 
 void led_bar_show_keys(uint16_t key_mask)
 {
-    /* 配对同步亮：1-9, 2-8, 3-7（同逻辑同色） */
-    if (key_mask & (1u << 1)) key_mask |= (1u << 9);
-    if (key_mask & (1u << 2)) key_mask |= (1u << 8);
-    if (key_mask & (1u << 3)) key_mask |= (1u << 7);
-
     for (int i = 0; i < LED_BAR_COUNT; i++) {
         if (key_mask & (1u << (i + 1))) {
             g_colors[i] = KEY_COLORS[i];   /* 每个键固定颜色 */
