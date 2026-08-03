@@ -65,3 +65,7 @@ build_out.txt
 *.mid
 *.midi
 *.rar
+
+# 交接/测试材料
+believer-hw-handoff/
+believer-hw-handoff.zip

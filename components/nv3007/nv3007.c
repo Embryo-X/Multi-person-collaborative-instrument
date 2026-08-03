@@ -193,6 +193,7 @@ void nv3007_fill_screen(uint16_t color)
 #define UI_WHITE  0xFFFF
 #define UI_BLACK  0x0000
 
+/* 全屏帧缓冲（一次整屏刷新，显示稳定） */
 static uint16_t g_ui_fb[NV3007_WIDTH * NV3007_HEIGHT];
 
 /* 6x8 ASCII 点阵字库 */
@@ -304,6 +305,7 @@ void nv3007_ui_panel_text(const char *text, int16_t left, int16_t right,
     ui_draw_text(x, y, text, size, color);
 }
 
+/* 一次整屏刷新（缓冲版，显示稳定） */
 void nv3007_ui_refresh(void)
 {
     nv3007_draw_region(0, 0, NV3007_WIDTH - 1, NV3007_HEIGHT - 1, g_ui_fb);

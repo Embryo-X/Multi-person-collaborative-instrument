@@ -24,6 +24,7 @@
 #include "esp_gatt_common_api.h"
 
 #include "ble_app.h"
+#include "song_guide.h"
 
 static const char *TAG = "ble";
 
@@ -104,11 +105,14 @@ static const uint8_t g_meta[14] = {
     'e','m','b','r','y','o','1','\0',  /* buildId[8] */
 };
 
-/* ---- 构造 Status 帧：STANDBY ---- */
+/* ---- 设备状态: 0=STANDBY 1=LOADED 2=PLAYING（hardcode 曲目上电即 LOADED）---- */
+static uint8_t g_dev_state = 1;
+
+/* ---- 构造 Status 帧 ---- */
 static void build_status(void)
 {
     memset(g_status, 0, sizeof(g_status));
-    g_status[0] = 0;   /* state = STANDBY */
+    g_status[0] = g_dev_state;   /* state */
 }
 
 /* ---- 启动广播 ---- */
@@ -257,11 +261,32 @@ static void gatts_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if,
                          g_role == 0x01 ? "打击" : g_role == 0x02 ? "弦乐" : "未分配");
             }
         } else if (h == g_char_handle[IDX_CONTROL]) {
-            ESP_LOGI(TAG, "Control opcode=0x%02X len=%u (暂不处理)", v[0], len);
+            uint8_t op = (len >= 1) ? v[0] : 0xFF;
+            /* 蓝牙接收信号返回终端 */
+            ESP_LOGI(TAG, "[BLE] Control 收到: opcode=0x%02X len=%u, 原始字节: %02X %02X %02X %02X %02X",
+                     op, len, v[0], len>1?v[1]:0, len>2?v[2]:0, len>3?v[3]:0, len>4?v[4]:0);
+            if (op == 0x01 && len >= 5) {
+                /* START + uint32 delayMs LE */
+                uint32_t delay = (uint32_t)v[1] | ((uint32_t)v[2] << 8) |
+                                 ((uint32_t)v[3] << 16) | ((uint32_t)v[4] << 24);
+                ESP_LOGI(TAG, "[BLE] → START delayMs=%u，启动 Believer 时间轴", (unsigned)delay);
+                song_guide_start(delay);
+                g_dev_state = 2;   /* PLAYING */
+                build_status();
+                notify_status();
+            } else if (op == 0x02) {
+                ESP_LOGI(TAG, "[BLE] → STOP，停止时间轴");
+                song_guide_stop();
+                g_dev_state = 1;   /* LOADED */
+                build_status();
+                notify_status();
+            } else {
+                ESP_LOGI(TAG, "[BLE] 未知 opcode=0x%02X (忽略)", op);
+            }
         } else if (h == g_char_handle[IDX_SONGDATA]) {
-            ESP_LOGI(TAG, "SongData chunk len=%u (暂不处理)", len);
+            ESP_LOGI(TAG, "[BLE] SongData 收到 %u 字节 (hardcode 路径忽略)", len);
         } else {
-            ESP_LOGW(TAG, "写入未知特征 handle=%d", h);
+            ESP_LOGW(TAG, "[BLE] 写入未知特征 handle=%d", h);
         }
         break;
     }

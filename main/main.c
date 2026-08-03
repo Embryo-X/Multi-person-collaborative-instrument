@@ -26,6 +26,7 @@
 #include "nvs_flash.h"
 #include "ble_app.h"
 #include "led_bar.h"
+#include "song_guide.h"
 #include "score_data.h"
 
 static const char *TAG = "main";
@@ -34,8 +35,8 @@ static const char *TAG = "main";
 #define RE_LED_PIN    GPIO_NUM_16
 
 #define UI_STYLE      1    /* 0=旧黑底白字(oled)  1=新三栏英文(nv3007) */
-#define BLE_ENABLED     0   /* 0=蓝牙常关，1=启动即开 */
-#define MODE_COUNT      3
+#define BLE_ENABLED     1   /* 1=启动即开（蓝牙广播 Embryo-Perc） */
+#define MODE_COUNT      4
 #define SCORE_LOOPS      1   /* MIDI 整首歌一遍 */
 #define SCORE_TOTAL      (SCORE_LEN * SCORE_LOOPS)
 
@@ -78,7 +79,7 @@ static void draw_ui_three(const char *top, const char *ll, const char *lv,
 }
 
 static const char *MODE_TEXTS[] = {
-    "架子鼓模式", "电子琴模式", "乐谱模式",
+    "架子鼓模式", "电子琴模式", "乐谱模式", "蓝牙模式",
 };
 
 static const uint32_t NOTE_FREQS[] = { 0, NOTE_DO, NOTE_RE, NOTE_MI, NOTE_FA, NOTE_SOL, NOTE_LA, NOTE_SI, NOTE_DO2, NOTE_RE2 };
@@ -93,6 +94,7 @@ static int last_score_step = -1;   /* 乐谱模式防闪烁：只在变化时刷
 static int seg_playing = 0;        /* 当前段是否在播放 */
 static uint32_t seg_start_ms = 0;  /* 段播放开始时间 */
 static int seg_note_idx = 0;       /* 段内音符游标 */
+static int last_ble_playing = -1;  /* BLE 模式状态防闪烁 */
 
 void app_main(void)
 {
@@ -101,13 +103,14 @@ void app_main(void)
     ESP_LOGI(TAG, "========================================");
 
     nvs_flash_init();  /* 蓝牙/WiFi 需要 NVS */
-    oled_init();
+    nv3007_init();     /* 只初始化屏幕（UI_STYLE 1 用 nv3007_ui，省 RAM 给 BLE） */
     button_init();
     keypad_init();
     audio_init();
     led_bar_init();   /* WS2812 灯带 */
+    song_guide_init();   /* Believer 时间轴引导任务 */
 #if BLE_ENABLED
-    ble_app_init();   /* 蓝牙常关，仅在宏开启时初始化 */
+    ble_app_init();   /* BLE 广播 Embryo-Perc */
 #endif
 
     gpio_reset_pin(DO_LED_PIN);
@@ -141,7 +144,7 @@ void app_main(void)
             ESP_LOGI(TAG, "→ 模式: %d", current_mode);
             /* 模式切换后立即刷新界面 */
             {
-                static const char *mode_en[] = { "DRUM", "PIANO", "SCORE" };
+                static const char *mode_en[] = { "DRUM", "PIANO", "SCORE", "BLE" };
                 if (UI_STYLE)
                     draw_ui_three(mode_en[current_mode], "MODE", mode_en[current_mode],
                                   "NOTE", "-", "STATUS", "READY", "GPIO4 SWITCH");
@@ -149,6 +152,10 @@ void app_main(void)
                     oled_draw_center_text(MODE_TEXTS[current_mode]);
             }
         }
+
+        /* 非 BLE 模式：蓝牙时间轴不跑，避免抢占灯带（与乐谱/按键互不影响） */
+        if (current_mode != 3 && song_guide_is_playing())
+            song_guide_stop();
 
         switch (current_mode) {
 
@@ -264,6 +271,24 @@ void app_main(void)
             for (int k = 1; k <= 9; k++)
                 if (released & (1u << k))
                     audio_stop_freq(NOTE_FREQS[k]);
+            }
+            break;
+
+        case 3: /* 蓝牙模式：Believer 时间轴亮灯（Web 控制 START/STOP） */
+            gpio_set_level(DO_LED_PIN, 0);
+            gpio_set_level(RE_LED_PIN, 0);
+            /* 灯带交给 song_guide（START 后按曲目节奏） */
+            {
+                int playing = song_guide_is_playing();
+                if (last_ble_playing != playing) {   /* 状态变化才刷新屏幕 */
+                    last_ble_playing = playing;
+                    if (UI_STYLE)
+                        draw_ui_three("BLE", "MODE", "BLE",
+                                      "STATUS", playing ? "PLAY" : "WAIT",
+                                      "-", "-", "WEB CONTROL");
+                    else
+                        oled_draw_center_text(MODE_TEXTS[3]);
+                }
             }
             break;
 

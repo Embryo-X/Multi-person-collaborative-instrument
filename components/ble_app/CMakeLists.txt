@@ -5,5 +5,5 @@ idf_component_register(
     INCLUDE_DIRS "."
                 "${BT_DIR}/include/esp32c3/include"
                 "${BT_DIR}/host/bluedroid/api/include/api"
-    REQUIRES bt log nvs_flash
+    REQUIRES bt log nvs_flash song_guide
 )

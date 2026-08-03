@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include "esp_log.h"
 #include "esp_check.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -22,12 +23,8 @@ static const char *TAG = "oled";
 #define WHITE  0xFFFF
 #define BLACK  0x0000
 
-/* 中央竖排文字列区域（覆盖中文字和 ASCII，防残留） */
-#define VERT_X0   ((OLED_WIDTH - 32) / 2)
-#define VERT_X1   (VERT_X0 + 31)
-
-/* 全屏帧缓冲 142x428 RGB565 = 122KB */
-static uint16_t g_fb[OLED_WIDTH * OLED_HEIGHT];
+/* 旧 UI 帧缓冲：heap 动态分配（不占 .bss，节省 RAM 给 BLE） */
+static uint16_t *g_fb = NULL;
 
 /* ==============================================================
  * 6x8 ASCII 点阵字库
@@ -152,6 +149,13 @@ static uint8_t text_width(const char *s) {
 esp_err_t oled_init(void)
 {
     ESP_RETURN_ON_ERROR(nv3007_init(), TAG, "nv3007_init");
+
+    /* 旧 UI 帧缓冲动态分配；失败则旧 UI 不可用（新三栏 UI 用 nv3007_ui_fb） */
+    g_fb = heap_caps_malloc(OLED_WIDTH * OLED_HEIGHT * 2, MALLOC_CAP_DEFAULT);
+    if (!g_fb) {
+        ESP_LOGW(TAG, "帧缓冲分配失败，旧 UI 不可用");
+        return ESP_OK;
+    }
 
     fb_fill(BLACK);
     nv3007_draw_region(0, 0, OLED_WIDTH - 1, OLED_HEIGHT - 1, g_fb);
