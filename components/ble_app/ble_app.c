@@ -108,10 +108,15 @@ static const uint8_t g_meta[14] = {
 /* ---- 设备状态: 0=STANDBY 1=LOADED 2=PLAYING（hardcode 曲目上电即 LOADED）---- */
 static uint8_t g_dev_state = 1;
 
-/* ---- 构造 Status 帧 ---- */
+/* ---- 构造 Status 帧：自动反映播放状态 ---- */
 static void build_status(void)
 {
     memset(g_status, 0, sizeof(g_status));
+    if (song_guide_is_playing()) {
+        g_dev_state = 2; /* PLAYING */
+    } else if (g_dev_state == 2) {
+        g_dev_state = 1; /* Believer 播完自动回 LOADED */
+    }
     g_status[0] = g_dev_state;   /* state */
 }
 
@@ -287,6 +292,15 @@ static void gatts_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if,
             ESP_LOGI(TAG, "[BLE] SongData 收到 %u 字节 (hardcode 路径忽略)", len);
         } else {
             ESP_LOGW(TAG, "[BLE] 写入未知特征 handle=%d", h);
+        }
+
+        /* 回写响应：Web 用 Write With Response 时需要，否则 Central 超时报错 */
+        if (param->write.need_rsp) {
+            esp_gatt_rsp_t rsp;
+            memset(&rsp, 0, sizeof(rsp));
+            rsp.attr_value.handle = param->write.handle;
+            esp_ble_gatts_send_response(gatts_if, param->write.conn_id,
+                                        param->write.trans_id, ESP_GATT_OK, &rsp);
         }
         break;
     }

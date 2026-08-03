@@ -22,8 +22,8 @@ static const char *TAG = "keypad";
 #define COLS         3
 #define DEBOUNCE_US  30000
 
-static const int ROW_PINS[ROWS] = { GPIO_NUM_38, GPIO_NUM_39, GPIO_NUM_4 };
-static const int COL_PINS[COLS] = { GPIO_NUM_35, GPIO_NUM_36, GPIO_NUM_37 };
+static const int ROW_PINS[ROWS] = { GPIO_NUM_7, GPIO_NUM_6, GPIO_NUM_5 };
+static const int COL_PINS[COLS] = { GPIO_NUM_17, GPIO_NUM_16, GPIO_NUM_15 };
 
 static const int KEY_MAP[ROWS][COLS] = {
     { 1, 2, 3 },    /* Do, Re, Mi */

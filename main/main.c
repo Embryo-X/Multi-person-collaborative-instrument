@@ -31,8 +31,6 @@
 
 static const char *TAG = "main";
 
-#define DO_LED_PIN    GPIO_NUM_15
-#define RE_LED_PIN    GPIO_NUM_16
 
 #define UI_STYLE      1    /* 0=旧黑底白字(oled)  1=新三栏英文(nv3007) */
 #define BLE_ENABLED     1   /* 1=启动即开（蓝牙广播 Embryo-Perc） */
@@ -113,12 +111,6 @@ void app_main(void)
     ble_app_init();   /* BLE 广播 Embryo-Perc */
 #endif
 
-    gpio_reset_pin(DO_LED_PIN);
-    gpio_set_direction(DO_LED_PIN, GPIO_MODE_OUTPUT);
-    gpio_set_level(DO_LED_PIN, 0);
-    gpio_reset_pin(RE_LED_PIN);
-    gpio_set_direction(RE_LED_PIN, GPIO_MODE_OUTPUT);
-    gpio_set_level(RE_LED_PIN, 0);
 
     ESP_LOGI(TAG, "当前模式: %d", current_mode);
     ESP_LOGI(TAG, "初始化完成");
@@ -130,12 +122,15 @@ void app_main(void)
         uint16_t released = g_last_mask & ~mask;    /* 本次松开的键 */
         g_last_mask = mask;
 
+        /* 调试：按键扫描状态（确认按键是否被检测到） */
+        if (new_keys || released)
+            ESP_LOGI(TAG, "[按键] mask=0x%04X new=0x%04X rel=0x%04X row=%d col=%d",
+                     mask, new_keys, released, keypad_get_row(), keypad_get_col());
+
         /* GPIO4 = 模式切换 */
         if (button_read_click()) {
             audio_stop();
             led_bar_clear();
-            gpio_set_level(DO_LED_PIN, 0);
-            gpio_set_level(RE_LED_PIN, 0);
             current_mode = (current_mode + 1) % MODE_COUNT;
             score_step = 0;
             score_done = 0;
@@ -153,16 +148,14 @@ void app_main(void)
             }
         }
 
-        /* 非 BLE 模式：蓝牙时间轴不跑，避免抢占灯带（与乐谱/按键互不影响） */
-        if (current_mode != 3 && song_guide_is_playing())
+        /* 仅架子鼓/电子琴模式停 Believer 时间轴（乐谱/BLE 可播 Believer） */
+        if (current_mode != 2 && current_mode != 3 && song_guide_is_playing())
             song_guide_stop();
 
         switch (current_mode) {
 
         case 0: /* 架子鼓：按键播放对应鼓音色 */
             led_bar_clear();
-            gpio_set_level(DO_LED_PIN, 0);
-            gpio_set_level(RE_LED_PIN, 0);
             for (int k = 1; k <= 9; k++) {
                 if (new_keys & (1u << k)) {
                     audio_play_drum(k);
@@ -177,11 +170,12 @@ void app_main(void)
                     }
                 }
             }
+            /* 松开任何键 → 停鼓音（鼓 voice freq=0） */
+            if (released)
+                audio_stop_freq(0);
             break;
 
         case 1: /* 电子琴：支持多键同时按下 → 和弦，灯带跟随按键 */
-            gpio_set_level(DO_LED_PIN, 0);
-            gpio_set_level(RE_LED_PIN, 0);
             led_bar_show_keys(mask);   /* 按下的音键点亮对应灯珠 */
             for (int k = 1; k <= 9; k++) {
                 if (new_keys & (1u << k)) {
@@ -202,81 +196,29 @@ void app_main(void)
             }
             break;
 
-        case 2: /* 乐谱：只在 score_step 变化时刷新屏幕（防闪烁） */
-            if (score_done) {
-                led_bar_clear();
-                if (last_score_step != -2) {   /* 只画一次 DONE */
-                    last_score_step = -2;
-                    if (UI_STYLE)
-                        draw_ui_three("SCORE", "STATUS", "DONE", "NOTE", "-", "KEY", "-", "SCORE MODE");
-                    else
-                        oled_draw_center_text("完成");
-                }
-                audio_stop();
-                break;
-            }
+        case 2: /* 乐谱：按第一个键自动播放整首 Believer（GM鼓+灯带） */
             {
-            int target = SCORE[score_step % SCORE_LEN];
-            int dur = SEG_DUR_MS[score_step % SCORE_LEN];   /* 该段时长(ms) */
-            uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
-            gpio_set_level(DO_LED_PIN, (target == 1) ? 1 : 0);
-            gpio_set_level(RE_LED_PIN, (target == 2) ? 1 : 0);
-            led_bar_show_keys(1u << target);   /* 提示该按的段键 → 对应灯珠亮 */
-
-            if (last_score_step != score_step) {   /* 段变化才刷新屏幕 */
-                last_score_step = score_step;
-                seg_playing = 0;                   /* 等待按键触发 */
-                if (UI_STYLE) {
-                    char stepbuf[16], kbbuf[8];
-                    snprintf(stepbuf, sizeof(stepbuf), "%d/%d", score_step + 1, SCORE_TOTAL);
-                    snprintf(kbbuf, sizeof(kbbuf), "%d", target);
-                    draw_ui_three("SCORE", "STEP", stepbuf, "NEXT", NOTE_NAMES[target],
-                                  "KEY", kbbuf, "PRESS TO PLAY");
-                } else {
-                    oled_draw_center_text(NOTE_NAMES[target]);
+                int playing = song_guide_is_playing();
+                /* 按任意键 → 启动 Believer 整首播放 */
+                if (new_keys && !playing) {
+                    audio_stop();
+                    song_guide_start(0);
+                    ESP_LOGI(TAG, "乐谱模式: 开始播放 Believer");
                 }
-            }
-
-            /* 按对段键 → 开始播放该段所有音符 */
-            if (!seg_playing && (new_keys & (1u << target))) {
-                seg_playing = 1;
-                seg_start_ms = now_ms;
-                seg_note_idx = SEG_NOTE_START[score_step];
-                audio_play_freq(NOTE_FREQS[target]);   /* 先播代表键 */
-                ESP_LOGI(TAG, "乐谱段 %d/%d: 开始播放", score_step + 1, SCORE_TOTAL);
-            }
-
-            /* 段播放中：按时间触发段内音符 */
-            if (seg_playing) {
-                int end_idx = SEG_NOTE_START[score_step] + SEG_NOTE_COUNT[score_step];
-                while (seg_note_idx < end_idx) {
-                    int off = SEG_NOTES_OFFSET[seg_note_idx];
-                    if (now_ms - seg_start_ms >= (uint32_t)off) {
-                        audio_play_freq(NOTE_FREQS[SEG_NOTES_KEY[seg_note_idx]]);
-                        seg_note_idx++;
-                    } else break;
+                /* 状态变化才刷新屏幕（防闪烁） */
+                if (last_score_step != (playing ? 1 : 0)) {
+                    last_score_step = playing ? 1 : 0;
+                    if (UI_STYLE)
+                        draw_ui_three("SCORE", "MODE", "BELIEVER",
+                                      "STATUS", playing ? "PLAY" : "PRESS",
+                                      "-", "-", "PRESS KEY TO PLAY");
+                    else
+                        oled_draw_center_text(MODE_TEXTS[2]);
                 }
-                /* 段时长到 → 进下一段 */
-                if (now_ms - seg_start_ms >= (uint32_t)dur) {
-                    score_step++;
-                }
-            }
-
-            if (score_step >= SCORE_TOTAL) {
-                score_done = 1;
-                gpio_set_level(DO_LED_PIN, 0);
-                gpio_set_level(RE_LED_PIN, 0);
-            }
-            /* 松开的键停音 */
-            for (int k = 1; k <= 9; k++)
-                if (released & (1u << k))
-                    audio_stop_freq(NOTE_FREQS[k]);
             }
             break;
 
-        case 3: /* 蓝牙模式：Believer 时间轴亮灯（Web 控制 START/STOP） */
-            gpio_set_level(DO_LED_PIN, 0);
-            gpio_set_level(RE_LED_PIN, 0);
+        case 3: /* 蓝牙模式：Believer 时间轴亮灯 + 按键发声（鼓+钢琴叠加） */
             /* 灯带交给 song_guide（START 后按曲目节奏） */
             {
                 int playing = song_guide_is_playing();
@@ -290,8 +232,24 @@ void app_main(void)
                         oled_draw_center_text(MODE_TEXTS[3]);
                 }
             }
+            /* 按键：同时播放鼓声 + 钢琴音（8声道混音叠加） */
+            for (int k = 1; k <= 9; k++) {
+                if (new_keys & (1u << k)) {
+                    audio_play_drum(k);              /* 鼓声 */
+                    audio_play_freq(NOTE_FREQS[k]);  /* 钢琴音 */
+                    ESP_LOGI(TAG, "BLE键 %d: 鼓+钢琴", k);
+                }
+                if (released & (1u << k))
+                    audio_stop_freq(NOTE_FREQS[k]);
+            }
             break;
 
+        }
+        /* 手动演奏模式（鼓0/琴1）无键按下 → 强制静音，杜绝残留音。
+         * 乐谱(2)/蓝牙(3) 的自主时间轴播放不能被"无键静音"打断（否则整曲被掐静音）。 */
+        if (mask == 0 && current_mode <= 1) {
+            audio_stop();
+            seg_playing = 0;
         }
         /* 音量调节（电位器 ADC，每 500ms 更新，不再显示在屏幕） */
         {

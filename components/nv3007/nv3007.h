@@ -18,9 +18,9 @@
 /* ========== 引脚 ========== */
 #define NV3007_SCLK_IO    GPIO_NUM_2     /* SPI 时钟 */
 #define NV3007_MOSI_IO    GPIO_NUM_1     /* SPI 数据 (屏丝印 MOS) */
-#define NV3007_DC_IO      GPIO_NUM_42    /* 命令/数据 */
-#define NV3007_RES_IO     GPIO_NUM_41    /* 复位 */
-#define NV3007_CS_IO      GPIO_NUM_40    /* 片选 */
+#define NV3007_DC_IO      GPIO_NUM_41    /* 命令/数据 */
+#define NV3007_RES_IO     GPIO_NUM_40    /* 复位 */
+#define NV3007_CS_IO      GPIO_NUM_42    /* 片选 */
 /* 背光 BLK 直接接 3.3V 常亮，不用 GPIO 控制 */
 
 /* ========== 分辨率 ==========

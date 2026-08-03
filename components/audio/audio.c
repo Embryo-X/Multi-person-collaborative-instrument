@@ -18,6 +18,7 @@
 #include "audio.h"
 #include "piano_samples.h"
 #include "drum_samples.h"
+#include "gm_drum_samples.h"
 
 static const char *TAG = "audio";
 
@@ -242,6 +243,16 @@ void audio_play_drum(int key)
     if (key < 1 || key > 9) return;
     const drum_sample_t *d = &g_drum_samples[key - 1];
     voice_allocate(d->data, d->length, 0, 0x10000);   /* step 1.0 */
+}
+
+void audio_play_gm_drum(int keyId)
+{
+    /* Believer GM 鼓：keyId 0~8 对应 gm_drums[0..8]，原速播放 */
+    if (keyId < 0 || keyId > 8) return;
+    const gm_drum_t *d = &g_gm_drums[keyId];
+    voice_t *vo = voice_allocate(d->data, d->length, 0, 0x10000);
+    ESP_LOGI(TAG, "GM鼓触发 keyId=%d len=%u voice=%p state=%d",
+             keyId, (unsigned)d->length, (void*)vo, vo ? vo->state : -1);
 }
 
 void audio_stop_freq(uint32_t freq_hz)

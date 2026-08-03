@@ -7,6 +7,7 @@
 
 #include "song_guide.h"
 #include "led_bar.h"
+#include "audio.h"
 
 #if defined(DEVICE_ROLE_STR)
 #include "song_data_str.h"
@@ -20,6 +21,7 @@ static volatile int g_playing = 0;
 static TickType_t g_t0_tick = 0;
 static uint32_t g_delay_ms = 0;
 static int g_waiting_delay = 0;
+static uint32_t g_evt_idx = 0;   /* 已发声的事件游标 */
 static TaskHandle_t g_task = NULL;
 
 /** keyId 0..8 → 朋友灯带 bit(keyId+1)；定色亮灭 */
@@ -74,6 +76,16 @@ static void guide_task(void *arg)
             last = 0;
             continue;
         }
+        /* 事件时间到 → 播放对应 GM 鼓音色（每个事件触发一次） */
+        while (g_evt_idx < SONG_EVENT_COUNT) {
+            if (now_ms >= SONG_EVENTS[g_evt_idx].tMs) {
+                audio_play_gm_drum(SONG_EVENTS[g_evt_idx].keyId);
+                ESP_LOGI(TAG, "事件[%u] tMs=%u keyId=%u", (unsigned)g_evt_idx,
+                         (unsigned)SONG_EVENTS[g_evt_idx].tMs,
+                         (unsigned)SONG_EVENTS[g_evt_idx].keyId);
+                g_evt_idx++;
+            } else break;
+        }
         uint16_t mask = mask_from_now(now_ms);
         if (mask != last) {
             led_bar_show_keys(mask);
@@ -101,6 +113,7 @@ void song_guide_start(uint32_t delay_ms)
     if (!g_waiting_delay) {
         g_t0_tick = xTaskGetTickCount();
     }
+    g_evt_idx = 0;   /* 重置事件游标 */
     g_playing = 1;
     ESP_LOGI(TAG, "START delay=%u ms", (unsigned)delay_ms);
 }
