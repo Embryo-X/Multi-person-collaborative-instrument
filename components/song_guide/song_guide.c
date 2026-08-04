@@ -28,13 +28,14 @@ static TaskHandle_t g_task = NULL;
 static uint16_t mask_from_now(uint32_t now_ms)
 {
     uint16_t mask = 0;
-    const uint32_t hold = 280;
+    /* 亮灯时长用每事件的 durationMs（与 Web 谱面色块一致），不再用固定 hold */
     for (uint32_t i = 0; i < SONG_EVENT_COUNT; i++) {
         uint32_t t = SONG_EVENTS[i].tMs;
         if (t > now_ms + 40) {
             break;
         }
-        if (now_ms + 40 >= t && now_ms <= t + hold) {
+        uint32_t end = t + SONG_EVENTS[i].durationMs;
+        if (now_ms + 40 >= t && now_ms <= end) {
             uint8_t kid = SONG_EVENTS[i].keyId;
             if (kid < 9) {
                 mask |= (uint16_t)(1u << (kid + 1));

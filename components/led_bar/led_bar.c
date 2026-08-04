@@ -52,7 +52,7 @@ static esp_err_t init_channel(rmt_channel_handle_t *chan, rmt_encoder_handle_t *
         .gpio_num = gpio,
         .clk_src = RMT_CLK_SRC_DEFAULT,
         .resolution_hz = LED_BAR_RES_HZ,
-        .mem_block_symbols = 256,           /* 3*24=72 symbols 够用 */
+        .mem_block_symbols = 96,            /* 3灯=72 symbols，2块(96)够；3条共288<384上限 */
         .trans_queue_depth = 4,
     };
     ESP_RETURN_ON_ERROR(rmt_new_tx_channel(&tx_cfg, chan), TAG, "rmt_new_tx_channel");
@@ -79,6 +79,9 @@ esp_err_t led_bar_init(void)
 static void send_strip(rmt_channel_handle_t chan, rmt_encoder_handle_t enc,
                        int led_start, int led_count)
 {
+    /* 通道创建失败（内存不足等）时跳过，避免反复往空句柄发送刷屏 */
+    if (chan == NULL || enc == NULL) return;
+
     rmt_symbol_word_t items[led_count * BITS_PER_LED];
     int idx = 0;
 
@@ -116,24 +119,46 @@ static void send_all(void)
     vTaskDelay(pdMS_TO_TICKS(1));   /* WS2812 复位: >50us 低电平 */
 }
 
-/* 每键固定颜色（彩虹色，GRB 顺序；高音区 7~9 与 3~1 同色） */
-static const grb_t KEY_COLORS[LED_BAR_COUNT] = {
-    {  0, 255,   0 },   /* key1 红    Do   */
-    {128, 255,   0 },   /* key2 橙    Re   */
-    {  0, 255, 255 },   /* key3 黄    Mi   */
-    {255,   0,   0 },   /* key4 绿    Fa   */
-    {255,   0, 255 },   /* key5 青    Sol  */
-    {  0,   0, 255 },   /* key6 蓝    La   */
-    {  0, 255, 255 },   /* key7 黄    Si   */
-    {128, 255,   0 },   /* key8 橙    高Do */
-    {  0, 255,   0 },   /* key9 红    高Re */
+/* 每键颜色 = Web keyColors.js 定色表（GRB），与谱面色块一致。
+ * 与 song_data 选择一致：DEVICE_ROLE_STR 时用弦乐 STR 表，否则用打击 PERC 表。 */
+#if defined(DEVICE_ROLE_STR)
+/* 弦乐 STR_KEY_COLORS · keyId 0..7（8 色，第 9 灯保持灭） */
+static const grb_t KEY_COLORS[8] = {
+    {160, 232,  32},   /* keyId0 #e8a020 */
+    {192, 240,  64},   /* keyId1 #f0c040 */
+    {184,  18, 134},   /* keyId2 #12b886 */
+    {201,  32, 151},   /* keyId3 #20c997 */
+    {110,  76, 245},   /* keyId4 #4c6ef5 */
+    {143, 116, 252},   /* keyId5 #748ffc */
+    { 62, 174, 201},   /* keyId6 #ae3ec9 */
+    {119, 218, 242},   /* keyId7 #da77f2 */
 };
+#define KEY_COLOR_COUNT 8
+#else
+/* 打击 PERC_KEY_COLORS · keyId 0..8（9 色） */
+static const grb_t KEY_COLORS[9] = {
+    {204, 255,   0},   /* keyId0 #ffcc00 */
+    {255,   0, 102},   /* keyId1 #00ff66 */
+    {204, 102, 255},   /* keyId2 #66ccff */
+    {255, 170,   0},   /* keyId3 #aaff00 */
+    {153, 255,   0},   /* keyId4 #ff9900 */
+    {102, 255, 204},   /* keyId5 #ff66cc */
+    { 51, 255,  51},   /* keyId6 #ff3333 */
+    {160, 184, 255},   /* keyId7 #b8a0ff */
+    {221,  68, 170},   /* keyId8 #44ddaa */
+};
+#define KEY_COLOR_COUNT 9
+#endif
 
 void led_bar_show_keys(uint16_t key_mask)
 {
     for (int i = 0; i < LED_BAR_COUNT; i++) {
         if (key_mask & (1u << (i + 1))) {
-            g_colors[i] = KEY_COLORS[i];   /* 每个键固定颜色 */
+            if (i < KEY_COLOR_COUNT) {
+                g_colors[i] = KEY_COLORS[i];   /* 每个键固定颜色（Web 定色） */
+            } else {
+                g_colors[i].g = 0;  g_colors[i].r = 0;  g_colors[i].b = 0;  /* 超出色表则灭 */
+            }
         } else {
             g_colors[i].g = 0;  g_colors[i].r = 0;  g_colors[i].b = 0;   /* 灭 */
         }
