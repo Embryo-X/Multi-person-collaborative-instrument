@@ -33,6 +33,11 @@ static uint32_t g_delay_ms = 0;
 static int g_waiting_delay = 0;
 static uint32_t g_evt_idx = 0;   /* 已发声的事件游标 */
 static TaskHandle_t g_task = NULL;
+static volatile int g_instrument_mode = 0;   /* 0=架子鼓(GM鼓) 1=钢琴(占位音) */
+
+/* keyId 1~9 → 钢琴频率（Do~Re2），钢琴占位音用；与 main.c NOTE_FREQS 一致 */
+static const uint32_t NOTE_FREQS[10] = { 0,
+    262, 294, 330, 349, 392, 440, 494, 523, 587 };   /* Do Re Mi Fa Sol La Si Do2 Re2 */
 
 /** keyId 0..8 → 朋友灯带 bit(keyId+1)；定色亮灭 */
 static uint16_t mask_from_now(uint32_t now_ms)
@@ -87,14 +92,18 @@ static void guide_task(void *arg)
             last = 0;
             continue;
         }
-        /* 事件时间到 → 播放对应 GM 鼓音色（每个事件触发一次，按事件 midi 发声） */
+        /* 事件时间到 → 播放（每个事件触发一次，按乐器模式选发声） */
         while (g_evt_idx < g_song->count) {
             if (now_ms >= g_song->events[g_evt_idx].tMs) {
-                audio_play_gm_drum_midi(g_song->events[g_evt_idx].midi);
-                ESP_LOGI(TAG, "事件[%u] tMs=%u keyId=%u midi=%u", (unsigned)g_evt_idx,
+                uint8_t kid = g_song->events[g_evt_idx].keyId;
+                if (g_instrument_mode == 1 && kid >= 1 && kid <= 9)
+                    audio_play_freq(NOTE_FREQS[kid]);   /* 钢琴占位音（keyId→频率） */
+                else
+                    audio_play_gm_drum_midi(g_song->events[g_evt_idx].midi);   /* 鼓 */
+                ESP_LOGI(TAG, "事件[%u] tMs=%u keyId=%u midi=%u inst=%d", (unsigned)g_evt_idx,
                          (unsigned)g_song->events[g_evt_idx].tMs,
-                         (unsigned)g_song->events[g_evt_idx].keyId,
-                         (unsigned)g_song->events[g_evt_idx].midi);
+                         (unsigned)kid, (unsigned)g_song->events[g_evt_idx].midi,
+                         (int)g_instrument_mode);
                 g_evt_idx++;
             } else break;
         }
@@ -126,6 +135,13 @@ void song_guide_set_song(int id)
         g_song = &g_songs[id];
         ESP_LOGI(TAG, "选择歌曲 %d (%u 事件)", id, (unsigned)g_song->count);
     }
+}
+
+/* 选择事件发声乐器：0=架子鼓(GM鼓), 1=钢琴(占位音) */
+void song_guide_set_instrument(int mode)
+{
+    g_instrument_mode = (mode != 0) ? 1 : 0;
+    ESP_LOGI(TAG, "乐器模式 → %s", g_instrument_mode ? "钢琴" : "架子鼓");
 }
 
 void song_guide_start(uint32_t delay_ms)

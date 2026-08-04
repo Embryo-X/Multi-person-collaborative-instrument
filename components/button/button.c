@@ -23,11 +23,14 @@ typedef enum {
     BTN_STATE_DEBOUNCE_DOWN, // 正在消抖（判断是否真的按下）
     BTN_STATE_PRESSED,       // 已按下：等待释放
     BTN_STATE_DEBOUNCE_UP,   // 正在消抖（判断是否真的释放）
+    BTN_STATE_WAIT_DOUBLE,   // 第一击完成，等待第二击或超时（判定单击/双击）
 } btn_state_t;
 
 /* --- 状态机相关全局变量 --- */
 static btn_state_t g_btn_state = BTN_STATE_IDLE;  // 当前状态
 static uint32_t g_debounce_time = 0;              // 消抖计时起点（ms）
+static uint32_t g_first_click_time = 0;           // 第一击完成时刻（ms）
+static uint8_t g_clicks = 0;                      // 双击窗口内已完成的击数
 
 /**
  * @brief 获取当前系统运行时间（毫秒）
@@ -59,7 +62,7 @@ uint8_t button_is_pressed(void) {
     return (gpio_get_level(BTN_GPIO) == 0) ? 1 : 0;
 }
 
-uint8_t button_read_click(void) {
+uint8_t button_read_event(void) {
     uint8_t level = gpio_get_level(BTN_GPIO);  // 读取当前引脚电平
     uint32_t now = get_ms();                    // 获取当前时间
 
@@ -67,6 +70,7 @@ uint8_t button_read_click(void) {
 
     // --- 状态 0：空闲，等待按键按下 ---
     case BTN_STATE_IDLE:
+        g_clicks = 0;
         if (level == 0) {                         // 检测到低电平（可能按下了）
             g_btn_state = BTN_STATE_DEBOUNCE_DOWN; // 进入消抖状态
             g_debounce_time = now;                 // 记录消抖开始时间
@@ -78,11 +82,9 @@ uint8_t button_read_click(void) {
         if ((now - g_debounce_time) >= BTN_DEBOUNCE_MS) {
             // 消抖时间到，再次读取引脚
             if (gpio_get_level(BTN_GPIO) == 0) {
-                // 确认是真实按下（不是干扰脉冲）
                 g_btn_state = BTN_STATE_PRESSED;
                 ESP_LOGD(TAG, "按键按下确认");
             } else {
-                // 是干扰，回到空闲
                 g_btn_state = BTN_STATE_IDLE;
             }
         }
@@ -101,16 +103,42 @@ uint8_t button_read_click(void) {
         if ((now - g_debounce_time) >= BTN_DEBOUNCE_MS) {
             if (gpio_get_level(BTN_GPIO) == 1) {
                 // 确认释放，一次完整点击完成！
-                ESP_LOGD(TAG, "按键释放确认 → 一次完整点击");
-                g_btn_state = BTN_STATE_IDLE;
-                return 1;  // ✅ 返回点击事件
+                ESP_LOGD(TAG, "按键释放确认 → 完成一次点击");
+                g_clicks++;
+                if (g_clicks >= 2) {
+                    // 第二击确认 → 双击
+                    g_clicks = 0;
+                    g_btn_state = BTN_STATE_IDLE;
+                    return 2;
+                }
+                // 第一击完成，进入双击等待窗口
+                g_first_click_time = now;
+                g_btn_state = BTN_STATE_WAIT_DOUBLE;
             } else {
-                // 仍未释放，回到按下状态
                 g_btn_state = BTN_STATE_PRESSED;
             }
         }
         break;
+
+    // --- 状态 4：等待第二击（判定单击/双击） ---
+    case BTN_STATE_WAIT_DOUBLE:
+        if (level == 0) {
+            // 第二击按下开始
+            g_btn_state = BTN_STATE_DEBOUNCE_DOWN;
+            g_debounce_time = now;
+        } else if ((now - g_first_click_time) >= BTN_DOUBLE_MS) {
+            // 窗口超时 → 判定为单击
+            g_clicks = 0;
+            g_btn_state = BTN_STATE_IDLE;
+            return 1;
+        }
+        break;
     }
 
-    return 0;  // 没有点击事件
+    return 0;  // 没有事件
+}
+
+/* 兼容旧接口：任何一次点击（单击或双击）都返回 1 */
+uint8_t button_read_click(void) {
+    return (button_read_event() != 0) ? 1 : 0;
 }

@@ -92,6 +92,7 @@ static const char *NOTE_NAMES[]     = { "", "Do", "Re", "Mi", "Fa", "Sol", "La",
 
 static uint8_t current_mode = 0;
 static uint16_t g_last_mask = 0;   /* 上一次按下的键位掩码（多键） */
+static uint8_t ble_instrument = 0; /* BLE 播放乐器：0=架子鼓 1=钢琴（双击切换） */
 static int score_step = 0;
 static int score_done = 0;
 static int last_score_step = -1;   /* 乐谱模式防闪烁：只在变化时刷新 */
@@ -134,8 +135,9 @@ void app_main(void)
             ESP_LOGI(TAG, "[按键] mask=0x%04X new=0x%04X rel=0x%04X row=%d col=%d",
                      mask, new_keys, released, keypad_get_row(), keypad_get_col());
 
-        /* GPIO4 = 模式切换 */
-        if (button_read_click()) {
+        /* GPIO4 = 单击切模式；双击（BLE 已连接）切乐器 */
+        uint8_t bevt = button_read_event();
+        if (bevt == 1) {   /* 单击 → 模式切换 */
             audio_stop();
             led_bar_clear();
             current_mode = (current_mode + 1) % MODE_COUNT;
@@ -155,6 +157,22 @@ void app_main(void)
                 else
                     oled_draw_center_text(MODE_TEXTS[current_mode]);
             }
+        } else if (bevt == 2) {   /* 双击 → 仅 BLE 已连接时切乐器 */
+#if BLE_ENABLED
+            if (current_mode == 3 && ble_app_is_connected()) {
+                ble_instrument = !ble_instrument;
+                song_guide_set_instrument(ble_instrument);
+                audio_stop();   /* 清残留音 */
+                ESP_LOGI(TAG, "BLE 乐器 → %s", ble_instrument ? "钢琴" : "架子鼓");
+                if (UI_STYLE)
+                    draw_ui_three("BLE", "MODE", "BLE",
+                                  "INST", ble_instrument ? "PIANO" : "DRUM",
+                                  "STATUS", song_guide_is_playing() ? "PLAY" : "WAIT",
+                                  "WEB CONTROL");
+                else
+                    oled_draw_center_text(MODE_TEXTS[3]);
+            }
+#endif
         }
 
         /* 仅架子鼓/电子琴模式停 Believer 时间轴（乐谱/BLE 可播 Believer） */
@@ -252,7 +270,8 @@ void app_main(void)
                     if (UI_STYLE)
                         draw_ui_three("BLE", "MODE", "BLE",
                                       "STATUS", playing ? "PLAY" : "WAIT",
-                                      "-", "-", "WEB CONTROL");
+                                      "INST", ble_instrument ? "PIANO" : "DRUM",
+                                      "WEB CONTROL");
                     else
                         oled_draw_center_text(MODE_TEXTS[3]);
                 }

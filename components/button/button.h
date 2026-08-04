@@ -21,6 +21,7 @@
 
 #define BTN_GPIO          GPIO_NUM_39   /* 按键引脚号               */
 #define BTN_DEBOUNCE_MS   20           /* 消抖时间（毫秒）          */
+#define BTN_DOUBLE_MS     300          /* 双击判定窗口（毫秒）      */
 
 /* ========== API 函数声明 ========== */
 
@@ -40,15 +41,17 @@ esp_err_t button_init(void);
 uint8_t button_is_pressed(void);
 
 /**
- * @brief 检测一次完整的"按下→松开"事件（带消抖）
- *        调用此函数不会阻塞，它会记住上次的状态
- *        在 loop 中反复调用，每检测到一次完整的按击返回 1
- *
- *        工作流程：
- *        空闲(高) → 检测到低电平 → 等20ms再读 → 确认低 → 标记为"按下"
- *       → 等待释放(高电平) → 等20ms再读 → 确认高 → 返回 1
- *
- * @return 1 = 检测到一次完整点击，0 = 没有
+ * @brief 检测"按下→松开"事件，并区分单击/双击（带消抖）
+ *        非阻塞，反复调用。返回：
+ *          0 = 无事件
+ *          1 = 单击（双击窗口内无第二击）
+ *          2 = 双击（窗口内两次点击）
+ *        注意：单击判定会在 BTN_DOUBLE_MS 窗口结束后才返回，略有延迟。
+ */
+uint8_t button_read_event(void);
+
+/**
+ * @brief 兼容旧接口：任何一次完整点击（单击或双击）都返回 1
  */
 uint8_t button_read_click(void);
 

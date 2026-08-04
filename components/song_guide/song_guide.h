@@ -13,3 +13,5 @@ void song_guide_stop(void);
 int song_guide_is_playing(void);
 /** 选择播放的歌曲：0=青修(青春修炼手册), 1=Believer */
 void song_guide_set_song(int id);
+/** 选择事件发声乐器：0=架子鼓(GM鼓), 1=钢琴(占位音) */
+void song_guide_set_instrument(int mode);

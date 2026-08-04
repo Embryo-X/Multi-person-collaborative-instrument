@@ -55,6 +55,7 @@ tools/analyze_screen.py
 
 # 参考项目 / 临时文件（不追踪）
 BadAppleESP32S3/
+2/
 1.txt
 build_err.txt
 build_out.txt
