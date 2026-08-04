@@ -245,14 +245,17 @@ void audio_play_drum(int key)
     voice_allocate(d->data, d->length, 0, 0x10000);   /* step 1.0 */
 }
 
-void audio_play_gm_drum(int keyId)
+void audio_play_gm_drum_midi(uint8_t midi)
 {
-    /* Believer GM 鼓：keyId 0~8 对应 gm_drums[0..8]，原速播放 */
-    if (keyId < 0 || keyId > 8) return;
-    const gm_drum_t *d = &g_gm_drums[keyId];
-    voice_t *vo = voice_allocate(d->data, d->length, 0, 0x10000);
-    ESP_LOGI(TAG, "GM鼓触发 keyId=%d len=%u voice=%p state=%d",
-             keyId, (unsigned)d->length, (void*)vo, vo ? vo->state : -1);
+    /* GM 鼓：按 MIDI 音符在 g_gm_drums[] 查表，原速播放 */
+    for (int i = 0; i < g_gm_drums_count; i++) {
+        if (g_gm_drums[i].midi == midi) {
+            const gm_drum_t *d = &g_gm_drums[i];
+            voice_allocate(d->data, d->length, 0, 0x10000);
+            return;
+        }
+    }
+    ESP_LOGW(TAG, "GM鼓 midi=%d 无采样，忽略", (int)midi);
 }
 
 void audio_stop_freq(uint32_t freq_hz)

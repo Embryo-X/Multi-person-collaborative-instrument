@@ -51,6 +51,8 @@ void nv3007_ui_fill_rect(int x, int y, int w, int h, uint16_t color);
 void nv3007_ui_draw_vline(int x, int y, int h, uint16_t color);
 void nv3007_ui_panel_text(const char *text, int16_t left, int16_t right,
                           int16_t y, uint8_t size, uint16_t color);
+/* 左对齐文本（如左上角音量），写入帧缓冲，需 nv3007_ui_refresh() 生效 */
+void nv3007_ui_text(int x, int y, const char *text, uint8_t size, uint16_t color);
 void nv3007_ui_refresh(void);
 
 #endif

@@ -65,7 +65,12 @@ build_out.txt
 *.mid
 *.midi
 *.rar
+*.aac
+*.ncm
 
 # 交接/测试材料
 believer-hw-handoff/
 believer-hw-handoff.zip
+qingchun_xiulian-hw-handoff/
+qingchun_xiulian-hw-handoff.zip
+*.zip

@@ -1,0 +1,4 @@
+dependencies:
+  idf: ">=5.0"
+  # 官方 WS2812 驱动组件：条A/B 用 RMT 后端，条C 用 SPI+DMA 后端
+  espressif/led_strip: "^2.5.0"

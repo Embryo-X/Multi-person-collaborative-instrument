@@ -305,6 +305,12 @@ void nv3007_ui_panel_text(const char *text, int16_t left, int16_t right,
     ui_draw_text(x, y, text, size, color);
 }
 
+/* 左对齐文本（左上角音量等），写入帧缓冲 */
+void nv3007_ui_text(int x, int y, const char *text, uint8_t size, uint16_t color)
+{
+    ui_draw_text(x, y, text, size, color);
+}
+
 /* 一次整屏刷新（缓冲版，显示稳定） */
 void nv3007_ui_refresh(void)
 {

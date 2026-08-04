@@ -25,10 +25,11 @@ static const char *TAG = "keypad";
 static const int ROW_PINS[ROWS] = { GPIO_NUM_7, GPIO_NUM_6, GPIO_NUM_5 };
 static const int COL_PINS[COLS] = { GPIO_NUM_17, GPIO_NUM_16, GPIO_NUM_15 };
 
+/* 键位映射：4~6 与 7~9 两组对调，补偿物理接线接反（按键 4-6 实接在 7-9 行，反之亦然） */
 static const int KEY_MAP[ROWS][COLS] = {
     { 1, 2, 3 },    /* Do, Re, Mi */
-    { 4, 5, 6 },    /* Fa, Sol, La */
-    { 7, 8, 9 },    /* Si, 高Do, 高Re */
+    { 4, 5, 6 },    /* Si, 高Do, 高Re (物理行实为 4~6 的键，接反补偿) */
+    { 7, 8, 9 },    /* Fa, Sol, La (物理行实为 7~9 的键，接反补偿) */
 };
 
 /* 消抖状态 */

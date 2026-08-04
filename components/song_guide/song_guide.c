@@ -9,13 +9,23 @@
 #include "led_bar.h"
 #include "audio.h"
 
-#if defined(DEVICE_ROLE_STR)
-#include "song_data_str.h"
-#else
-#include "song_data_perc.h"
-#endif
+#include "song_data_believer_perc.h"
+#include "song_data_qingchun_xiulian_perc.h"
 
 static const char *TAG = "song_guide";
+
+/* 歌曲注册表：song_guide_set_song(id) 选择播哪首（乐谱→Believer, BLE→青修） */
+typedef struct {
+    const song_event_t *events;
+    uint32_t count;
+    uint32_t duration_ms;
+} song_def_t;
+
+static const song_def_t g_songs[] = {
+    { QINGCHUN_EVENTS, QINGCHUN_EVENT_COUNT, QINGCHUN_DURATION_MS },  /* 0 = 青春修炼手册 */
+    { BELIEVER_EVENTS, BELIEVER_EVENT_COUNT, BELIEVER_DURATION_MS },  /* 1 = Believer */
+};
+static const song_def_t *g_song = &g_songs[0];
 
 static volatile int g_playing = 0;
 static TickType_t g_t0_tick = 0;
@@ -29,14 +39,14 @@ static uint16_t mask_from_now(uint32_t now_ms)
 {
     uint16_t mask = 0;
     /* 亮灯时长用每事件的 durationMs（与 Web 谱面色块一致），不再用固定 hold */
-    for (uint32_t i = 0; i < SONG_EVENT_COUNT; i++) {
-        uint32_t t = SONG_EVENTS[i].tMs;
+    for (uint32_t i = 0; i < g_song->count; i++) {
+        uint32_t t = g_song->events[i].tMs;
         if (t > now_ms + 40) {
             break;
         }
-        uint32_t end = t + SONG_EVENTS[i].durationMs;
+        uint32_t end = t + g_song->events[i].durationMs;
         if (now_ms + 40 >= t && now_ms <= end) {
-            uint8_t kid = SONG_EVENTS[i].keyId;
+            uint8_t kid = g_song->events[i].keyId;
             if (kid < 9) {
                 mask |= (uint16_t)(1u << (kid + 1));
             }
@@ -70,20 +80,21 @@ static void guide_task(void *arg)
         }
         uint32_t now_ms =
             (uint32_t)((now - g_t0_tick) * portTICK_PERIOD_MS);
-        if (now_ms >= SONG_DURATION_MS) {
+        if (now_ms >= g_song->duration_ms) {
             ESP_LOGI(TAG, "song done @ %u ms", now_ms);
             g_playing = 0;
             led_bar_clear();
             last = 0;
             continue;
         }
-        /* 事件时间到 → 播放对应 GM 鼓音色（每个事件触发一次） */
-        while (g_evt_idx < SONG_EVENT_COUNT) {
-            if (now_ms >= SONG_EVENTS[g_evt_idx].tMs) {
-                audio_play_gm_drum(SONG_EVENTS[g_evt_idx].keyId);
-                ESP_LOGI(TAG, "事件[%u] tMs=%u keyId=%u", (unsigned)g_evt_idx,
-                         (unsigned)SONG_EVENTS[g_evt_idx].tMs,
-                         (unsigned)SONG_EVENTS[g_evt_idx].keyId);
+        /* 事件时间到 → 播放对应 GM 鼓音色（每个事件触发一次，按事件 midi 发声） */
+        while (g_evt_idx < g_song->count) {
+            if (now_ms >= g_song->events[g_evt_idx].tMs) {
+                audio_play_gm_drum_midi(g_song->events[g_evt_idx].midi);
+                ESP_LOGI(TAG, "事件[%u] tMs=%u keyId=%u midi=%u", (unsigned)g_evt_idx,
+                         (unsigned)g_song->events[g_evt_idx].tMs,
+                         (unsigned)g_song->events[g_evt_idx].keyId,
+                         (unsigned)g_song->events[g_evt_idx].midi);
                 g_evt_idx++;
             } else break;
         }
@@ -98,12 +109,23 @@ static void guide_task(void *arg)
 
 esp_err_t song_guide_init(void)
 {
-    ESP_LOGI(TAG, "hardcode events=%u duration=%u ms",
-             (unsigned)SONG_EVENT_COUNT, (unsigned)SONG_DURATION_MS);
+    ESP_LOGI(TAG, "歌曲注册表 %d 首，当前 events=%u duration=%u ms",
+             (int)(sizeof(g_songs) / sizeof(g_songs[0])),
+             (unsigned)g_song->count, (unsigned)g_song->duration_ms);
     if (!g_task) {
         xTaskCreate(guide_task, "song_guide", 4096, NULL, 5, &g_task);
     }
     return ESP_OK;
+}
+
+/* 选择要播放的歌曲：0=青修(青春修炼手册), 1=Believer */
+void song_guide_set_song(int id)
+{
+    int n = (int)(sizeof(g_songs) / sizeof(g_songs[0]));
+    if (id >= 0 && id < n) {
+        g_song = &g_songs[id];
+        ESP_LOGI(TAG, "选择歌曲 %d (%u 事件)", id, (unsigned)g_song->count);
+    }
 }
 
 void song_guide_start(uint32_t delay_ms)

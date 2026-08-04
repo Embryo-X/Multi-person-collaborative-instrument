@@ -23,6 +23,12 @@ esp_err_t led_bar_init(void);
  *   键 1~3 → GPIO20 条；键 4~6 → GPIO21 条；键 7~9 → GPIO35 条 */
 void led_bar_show_keys(uint16_t key_mask);
 
+/* 随机颜色模式（架子鼓/电子琴手动弹奏用）：
+ *   led_bar_randomize_key(key) 给某键分配一个随机 GRB（按下时调一次）
+ *   led_bar_show_keys_random(mask) 用已分配的随机色点亮当前按下的键 */
+void led_bar_randomize_key(int key);        /* key 1..9 */
+void led_bar_show_keys_random(uint16_t key_mask);
+
 void led_bar_clear(void);   /* 全灭 */
 
 #endif

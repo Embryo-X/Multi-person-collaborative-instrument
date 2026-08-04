@@ -42,8 +42,8 @@ with open(h_path, 'w', encoding='utf-8') as hf, open(c_path, 'w', encoding='utf-
             for j in range(FADE_LEN):
                 g = 1.0 - j / FADE_LEN
                 samples[len(samples) - FADE_LEN + j] = int(samples[len(samples) - FADE_LEN + j] * g)
-        # 降增益 20%，防多鼓同响破音
-        samples = [int(v * 0.8) for v in samples]
+        # 原降增益 20% 防破音；用户要求鼓更响，改为全幅（混音端 ±12000 限幅兜底）
+        samples = [int(v) for v in samples]
         total += len(samples) * 2
 
         vn = f"g_drum_{i}"

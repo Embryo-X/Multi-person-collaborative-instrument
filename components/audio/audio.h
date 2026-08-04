@@ -2,7 +2,7 @@
  * ==============================================================
  * 音频输出 — I2S MAX98357A 数字功放
  * ==============================================================
- * BCLK=48  LRCLK=45  DIN=47  音量ADC=21
+ * BCLK=48  LRCLK=45  DIN=47  音量ADC=10
  * ==============================================================
  */
 
@@ -17,10 +17,10 @@
 #define AUDIO_LRCLK_IO        GPIO_NUM_45
 #define AUDIO_DIN_IO          GPIO_NUM_47
 
-/* ADC 音量（GPIO4 = ADC1_CH3，ADC1 不受蓝牙干扰） */
-#define VOLUME_ADC_PIN      4
+/* ADC 音量（GPIO10 = ADC1_CH9，ADC1 不受蓝牙干扰） */
+#define VOLUME_ADC_PIN      10
 #define VOLUME_ADC_UNIT     ADC_UNIT_1
-#define VOLUME_ADC_CHAN     ADC_CHANNEL_3
+#define VOLUME_ADC_CHAN     ADC_CHANNEL_9
 
 /* 音高频率 (Hz) */
 #define NOTE_DO             262
@@ -41,7 +41,7 @@
 esp_err_t audio_init(void);
 void audio_play_freq(uint32_t freq_hz);  /* 触发一个音符（钢琴，支持多音叠加） */
 void audio_play_drum(int key);           /* 触发架子鼓音色（key 1~9） */
-void audio_play_gm_drum(int keyId);      /* 触发 Believer GM 鼓音色（keyId 0~8） */
+void audio_play_gm_drum_midi(uint8_t midi);  /* 触发 GM 鼓音色（按 MIDI 音符查表） */
 void audio_stop_freq(uint32_t freq_hz);  /* 停止指定音符 */
 void audio_stop(void);                    /* 停止所有音符 */
 void audio_set_volume(uint8_t pct);

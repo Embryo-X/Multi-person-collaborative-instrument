@@ -16,6 +16,7 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_system.h"
 #include "driver/gpio.h"
 
 #include "oled.h"
@@ -27,7 +28,6 @@
 #include "ble_app.h"
 #include "led_bar.h"
 #include "song_guide.h"
-#include "score_data.h"
 
 static const char *TAG = "main";
 
@@ -57,6 +57,12 @@ static void draw_ui_three(const char *top, const char *ll, const char *lv,
     nv3007_ui_clear();
     nv3007_ui_fill_rect(0, 0, OLED_WIDTH, 24, C_BLUE);          /* 顶条（蓝） */
     nv3007_ui_panel_text(top, 0, 300, 5, 2, C_WHITE);
+    /* 左上角音量显示（VOL0-100） */
+    {
+        char vbuf[16];
+        snprintf(vbuf, sizeof(vbuf), "VOL%u", (unsigned)audio_get_volume());
+        nv3007_ui_text(4, 7, vbuf, 1, C_WHITE);
+    }
     /* 右上角显示蓝牙状态（不占用模式） */
 #if BLE_ENABLED
     nv3007_ui_panel_text(ble_app_is_connected() ? "CONN" : "WAIT", 320, OLED_WIDTH, 8, 1, C_GREEN);
@@ -106,7 +112,8 @@ void app_main(void)
     keypad_init();
     audio_init();
     led_bar_init();   /* WS2812 灯带 */
-    song_guide_init();   /* Believer 时间轴引导任务 */
+    song_guide_init();   /* 时间轴引导任务 */
+    song_guide_set_song(0);   /* 默认青修(0)；乐谱模式切到 Believer(1) */
 #if BLE_ENABLED
     ble_app_init();   /* BLE 广播 Embryo-Perc */
 #endif
@@ -136,6 +143,8 @@ void app_main(void)
             score_done = 0;
             last_score_step = -1;
             g_last_mask = 0;
+            /* 只用青修(0)；Believer(1) 数据保留在注册表，供后续烧录时切换 */
+            song_guide_set_song(0);
             ESP_LOGI(TAG, "→ 模式: %d", current_mode);
             /* 模式切换后立即刷新界面 */
             {
@@ -152,13 +161,27 @@ void app_main(void)
         if (current_mode != 2 && current_mode != 3 && song_guide_is_playing())
             song_guide_stop();
 
+        /* 调试：长按切换模式键 3 秒 → 整机重启 */
+        {
+            static int64_t hold_start = -1;
+            if (button_is_pressed()) {
+                if (hold_start < 0) hold_start = esp_timer_get_time();
+                else if ((esp_timer_get_time() - hold_start) >= 3000 * 1000LL) {
+                    ESP_LOGI(TAG, "长按 3 秒 → 重启设备");
+                    esp_restart();
+                }
+            } else {
+                hold_start = -1;
+            }
+        }
+
         switch (current_mode) {
 
-        case 0: /* 架子鼓：按键播放对应鼓音色 */
-            led_bar_clear();
+        case 0: /* 架子鼓：按键播放对应鼓音色 + 随机色亮灯 */
             for (int k = 1; k <= 9; k++) {
                 if (new_keys & (1u << k)) {
                     audio_play_drum(k);
+                    led_bar_randomize_key(k);   /* 每次按下分配随机色 */
                     if (UI_STYLE) {
                         /* 类别：1-4鼓(D) 5-8镲(C) 9低鼓(BD) */
                         const char *cat = (k <= 4) ? "D" : (k <= 8) ? "C" : "BD";
@@ -170,15 +193,16 @@ void app_main(void)
                     }
                 }
             }
+            led_bar_show_keys_random(mask);   /* 亮当前按下的键（随机色），松键即灭 */
             /* 松开任何键 → 停鼓音（鼓 voice freq=0） */
             if (released)
                 audio_stop_freq(0);
             break;
 
-        case 1: /* 电子琴：支持多键同时按下 → 和弦，灯带跟随按键 */
-            led_bar_show_keys(mask);   /* 按下的音键点亮对应灯珠 */
+        case 1: /* 电子琴：支持多键同时按下 → 和弦，灯带跟随按键（随机色） */
             for (int k = 1; k <= 9; k++) {
                 if (new_keys & (1u << k)) {
+                    led_bar_randomize_key(k);   /* 每次按下分配随机色 */
                     audio_play_freq(NOTE_FREQS[k]);
                     /* 显示最后按下的音名（两套 UI） */
                     if (UI_STYLE) {
@@ -194,22 +218,23 @@ void app_main(void)
                 if (released & (1u << k))
                     audio_stop_freq(NOTE_FREQS[k]);
             }
+            led_bar_show_keys_random(mask);   /* 亮当前按下的键（随机色），松键即灭 */
             break;
 
-        case 2: /* 乐谱：按第一个键自动播放整首 Believer（GM鼓+灯带） */
+        case 2: /* 一键播歌：按任意键播放整首青春修炼手册（GM鼓+灯带） */
             {
                 int playing = song_guide_is_playing();
-                /* 按任意键 → 启动 Believer 整首播放 */
+                /* 按任意键 → 启动青修整首播放 */
                 if (new_keys && !playing) {
                     audio_stop();
                     song_guide_start(0);
-                    ESP_LOGI(TAG, "乐谱模式: 开始播放 Believer");
+                    ESP_LOGI(TAG, "一键播歌: 开始播放青修");
                 }
                 /* 状态变化才刷新屏幕（防闪烁） */
                 if (last_score_step != (playing ? 1 : 0)) {
                     last_score_step = playing ? 1 : 0;
                     if (UI_STYLE)
-                        draw_ui_three("SCORE", "MODE", "BELIEVER",
+                        draw_ui_three("SCORE", "MODE", "QINGCHUN",
                                       "STATUS", playing ? "PLAY" : "PRESS",
                                       "-", "-", "PRESS KEY TO PLAY");
                     else
@@ -251,12 +276,23 @@ void app_main(void)
             audio_stop();
             seg_playing = 0;
         }
-        /* 音量调节（电位器 ADC，每 500ms 更新，不再显示在屏幕） */
+        /* 音量调节（电位器 ADC，每 500ms 更新；变化时按屏幕刷新节奏重绘左上角音量） */
         {
             static int vol_tick = 0;
+            static uint8_t last_vol = 255;
             if (++vol_tick >= 50) {
                 vol_tick = 0;
                 audio_update_volume();
+                uint8_t v = audio_get_volume();
+                if (v != last_vol) {
+                    last_vol = v;
+                    if (UI_STYLE) {
+                        char vbuf[16];
+                        snprintf(vbuf, sizeof(vbuf), "VOL%u", (unsigned)v);
+                        nv3007_ui_text(4, 7, vbuf, 1, C_WHITE);
+                        nv3007_ui_refresh();
+                    }
+                }
             }
         }
 

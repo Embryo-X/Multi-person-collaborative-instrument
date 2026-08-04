@@ -11,3 +11,5 @@ esp_err_t song_guide_init(void);
 void song_guide_start(uint32_t delay_ms);
 void song_guide_stop(void);
 int song_guide_is_playing(void);
+/** 选择播放的歌曲：0=青修(青春修炼手册), 1=Believer */
+void song_guide_set_song(int id);

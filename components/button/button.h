@@ -19,7 +19,7 @@
 
 /* ========== 引脚 & 参数配置（可按需修改）========== */
 
-#define BTN_GPIO          GPIO_NUM_14   /* 按键引脚号               */
+#define BTN_GPIO          GPIO_NUM_39   /* 按键引脚号               */
 #define BTN_DEBOUNCE_MS   20           /* 消抖时间（毫秒）          */
 
 /* ========== API 函数声明 ========== */

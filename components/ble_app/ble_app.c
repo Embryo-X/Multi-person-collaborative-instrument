@@ -25,6 +25,8 @@
 
 #include "ble_app.h"
 #include "song_guide.h"
+#include "audio.h"
+#include "led_bar.h"
 
 static const char *TAG = "ble";
 
@@ -224,7 +226,12 @@ static void gatts_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if,
     case ESP_GATTS_DISCONNECT_EVT:
         g_connected = 0;
         g_conn_id = 0;
-        ESP_LOGI(TAG, "<<< 设备已断开 >>>");
+        ESP_LOGI(TAG, "<<< 设备已断开，停止所有操作 >>>");
+        /* 断连后自动停止一切：时间轴+灯+声音 */
+        song_guide_stop();   /* 内部会 led_bar_clear() 清灯 */
+        audio_stop();        /* 停止所有 voice */
+        led_bar_clear();     /* 双保险清灯 */
+        g_dev_state = 1;     /* LOADED */
         start_advertising();
         break;
 
