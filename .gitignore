@@ -56,6 +56,8 @@ tools/analyze_screen.py
 # 参考项目 / 临时文件（不追踪）
 BadAppleESP32S3/
 2/
+# 恢复出来仅供查看的触摸代码，不追踪
+components/touch/
 1.txt
 build_err.txt
 build_out.txt

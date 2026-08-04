@@ -245,6 +245,20 @@ void audio_play_drum(int key)
     voice_allocate(d->data, d->length, 0, 0x10000);   /* step 1.0 */
 }
 
+/* BLE 手动鼓：用标记频率(0xFFFF00+key)区别于时间轴GM鼓(freq=0)与钢琴(262~659)，
+ * 使松开按键时能单独停止手动鼓、不影响时间轴自动播歌 */
+#define DRUM_KEY_FREQ(k)  (0xFFFF00u + (uint32_t)(k))
+void audio_play_drum_key(int key)
+{
+    if (key < 1 || key > 9) return;
+    const drum_sample_t *d = &g_drum_samples[key - 1];
+    voice_allocate(d->data, d->length, DRUM_KEY_FREQ(key), 0x10000);
+}
+void audio_stop_drum_key(int key)
+{
+    audio_stop_freq(DRUM_KEY_FREQ(key));
+}
+
 void audio_play_gm_drum_midi(uint8_t midi)
 {
     /* GM 鼓：按 MIDI 音符在 g_gm_drums[] 查表，原速播放 */

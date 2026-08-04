@@ -261,7 +261,7 @@ void app_main(void)
             }
             break;
 
-        case 3: /* 蓝牙模式：Believer 时间轴亮灯 + 按键发声（鼓+钢琴叠加） */
+        case 3: /* 蓝牙模式：时间轴亮灯 + 按键发声（START 后才响，按乐器模式发一种） */
             /* 灯带交给 song_guide（START 后按曲目节奏） */
             {
                 int playing = song_guide_is_playing();
@@ -276,15 +276,23 @@ void app_main(void)
                         oled_draw_center_text(MODE_TEXTS[3]);
                 }
             }
-            /* 按键：同时播放鼓声 + 钢琴音（8声道混音叠加） */
+            /* 按键：仅 START 后发声；只发一种乐器；松开即停（不影响时间轴自动播歌） */
             for (int k = 1; k <= 9; k++) {
                 if (new_keys & (1u << k)) {
-                    audio_play_drum(k);              /* 鼓声 */
-                    audio_play_freq(NOTE_FREQS[k]);  /* 钢琴音 */
-                    ESP_LOGI(TAG, "BLE键 %d: 鼓+钢琴", k);
+                    if (song_guide_is_playing()) {
+                        if (ble_instrument == 1)
+                            audio_play_freq(NOTE_FREQS[k]);   /* 钢琴 */
+                        else
+                            audio_play_drum_key(k);           /* 架子鼓(标记频率) */
+                        ESP_LOGI(TAG, "BLE键 %d: %s", k, ble_instrument ? "钢琴" : "鼓");
+                    }
                 }
-                if (released & (1u << k))
-                    audio_stop_freq(NOTE_FREQS[k]);
+                if (released & (1u << k)) {
+                    if (ble_instrument == 1)
+                        audio_stop_freq(NOTE_FREQS[k]);       /* 停钢琴 */
+                    else
+                        audio_stop_drum_key(k);               /* 停手动鼓 */
+                }
             }
             break;
 
